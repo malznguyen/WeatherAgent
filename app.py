@@ -3,20 +3,43 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 
-# Load environment variables from the .env file (if present).
-load_dotenv()
+def _load_required_api_keys() -> Tuple[str, str]:
+    """Load the API keys required for the application to operate."""
+
+    load_dotenv()
+
+    openweather_api_key = os.getenv("OPENWEATHER_API_KEY", "").strip()
+    openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
+
+    missing_keys = [
+        name
+        for name, value in (
+            ("OPENWEATHER_API_KEY", openweather_api_key),
+            ("OPENAI_API_KEY", openai_api_key),
+        )
+        if not value
+    ]
+
+    if missing_keys:
+        missing_list = ", ".join(missing_keys)
+        raise RuntimeError(
+            f"Missing required environment variable(s): {missing_list}."
+        )
+
+    return openweather_api_key, openai_api_key
+
 
 # Configure basic logging for the application.
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def init_data_agent() -> Any:
+def init_data_agent(api_key: str) -> Any:
     """Initialise the DataAgent instance.
 
     If the concrete implementation is not yet available, a placeholder agent is
@@ -29,7 +52,7 @@ def init_data_agent() -> Any:
         data_agent_cls = getattr(data_agent_module, "DataAgent", None)
         if data_agent_cls is None:
             raise AttributeError("DataAgent class not implemented yet.")
-        return data_agent_cls()
+        return data_agent_cls(api_key)
     except Exception as exc:  # pragma: no cover - defensive fallback
         logger.warning("Using placeholder DataAgent due to: %s", exc)
 
@@ -40,7 +63,7 @@ def init_data_agent() -> Any:
         return _PlaceholderDataAgent()
 
 
-def init_analysis_agent() -> Any:
+def init_analysis_agent(api_key: str) -> Any:
     """Initialise the AnalysisAgent instance.
 
     Similar to :func:`init_data_agent`, a placeholder implementation is
@@ -53,7 +76,7 @@ def init_analysis_agent() -> Any:
         analysis_agent_cls = getattr(analysis_agent_module, "AnalysisAgent", None)
         if analysis_agent_cls is None:
             raise AttributeError("AnalysisAgent class not implemented yet.")
-        return analysis_agent_cls()
+        return analysis_agent_cls(api_key)
     except Exception as exc:  # pragma: no cover - defensive fallback
         logger.warning("Using placeholder AnalysisAgent due to: %s", exc)
 
@@ -66,10 +89,17 @@ def init_analysis_agent() -> Any:
         return _PlaceholderAnalysisAgent()
 
 
+try:
+    OPENWEATHER_API_KEY, OPENAI_API_KEY = _load_required_api_keys()
+except RuntimeError as error:
+    logger.error("Application configuration error: %s", error)
+    raise
+
+
 app = Flask(__name__)
 
-data_agent = init_data_agent()
-analysis_agent = init_analysis_agent()
+data_agent = init_data_agent(OPENWEATHER_API_KEY)
+analysis_agent = init_analysis_agent(OPENAI_API_KEY)
 
 
 @app.route("/")
@@ -90,10 +120,14 @@ def forecast() -> Any:
         return jsonify({"error": "Missing 'city' in request payload."}), 400
 
     try:
-        raw_forecast = data_agent.get_forecast(city)
+        raw_forecast = _fetch_raw_forecast(city)
     except NotImplementedError as exc:
         logger.error("DataAgent is not ready: %s", exc)
         return jsonify({"error": str(exc)}), 501
+
+    if raw_forecast is None:
+        logger.error("DataAgent returned no forecast data for city '%s'", city)
+        return jsonify({"error": "Unable to retrieve forecast data."}), 502
 
     try:
         processed_forecast = _process_forecast(raw_forecast)
@@ -116,11 +150,18 @@ def _process_forecast(raw_forecast: Dict[str, Any]) -> Dict[str, Any]:
     raise NotImplementedError("AnalysisAgent lacks a recognised processing method.")
 
 
-if __name__ == "__main__":
-    # Access environment variables as needed (e.g., API keys) so they are loaded.
-    openweather_api_key = os.getenv("OPENWEATHER_API_KEY", "<missing>")
-    openai_api_key = os.getenv("OPENAI_API_KEY", "<missing>")
-    logger.info("OPENWEATHER_API_KEY loaded: %s", openweather_api_key != "<missing>")
-    logger.info("OPENAI_API_KEY loaded: %s", openai_api_key != "<missing>")
+def _fetch_raw_forecast(city: str) -> Any:
+    """Obtain the forecast from the configured data agent."""
 
+    if hasattr(data_agent, "get_forecast"):
+        return data_agent.get_forecast(city)
+
+    if hasattr(data_agent, "fetch_forecast"):
+        return data_agent.fetch_forecast(city)
+
+    raise NotImplementedError("DataAgent lacks a recognised forecast retrieval method.")
+
+
+if __name__ == "__main__":
+    logger.info("Starting WeatherAgent Flask application.")
     app.run(debug=True)
