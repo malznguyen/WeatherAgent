@@ -9,11 +9,13 @@ const locationBtn = document.getElementById("location-btn");
 const locationLabel = document.getElementById("location-label");
 const toastEl = document.getElementById("toast");
 
-const aiDrawer = document.getElementById("ai-drawer");
+const aiDock = document.getElementById("ai-dock");
 const aiContent = document.getElementById("ai-content");
 const aiInput = document.getElementById("ai-input");
-const btnInsights = document.getElementById("btn-insights");
-const btnAlerts = document.getElementById("btn-alerts");
+const aiToggle = document.getElementById("ai-toggle");
+const aiClose = document.getElementById("ai-close");
+const aiTabs = Array.from(document.querySelectorAll(".ai-tab"));
+const aiChatForm = document.getElementById("ai-chat-form");
 const btnAsk = document.getElementById("btn-ask");
 
 const currentTempEl = document.getElementById("current-temp");
@@ -30,6 +32,92 @@ let map;
 let marker;
 let lastLatLon = null;
 let aiLoading = false;
+const aiFetchTracker = { insights: 0, alerts: 0 };
+const aiState = { activeTab: "insights", open: false };
+
+function setLastLatLon(lat, lon) {
+  if (typeof lat !== "number" || typeof lon !== "number") return;
+  if (Number.isNaN(lat) || Number.isNaN(lon)) return;
+  const prev = lastLatLon;
+  const changed = !prev || prev.lat !== lat || prev.lon !== lon;
+  lastLatLon = { lat, lon };
+  if (changed) {
+    aiFetchTracker.insights = 0;
+    aiFetchTracker.alerts = 0;
+  }
+}
+
+function toggleAiDock(targetTab) {
+  if (aiState.open) {
+    closeAiDock();
+  } else {
+    openAiDock(targetTab || aiState.activeTab);
+  }
+}
+
+function openAiDock(targetTab) {
+  if (!aiDock) return;
+  aiState.open = true;
+  aiDock.classList.add("open");
+  aiDock.setAttribute("aria-hidden", "false");
+  if (aiToggle) {
+    aiToggle.classList.add("hidden");
+  }
+  if (typeof targetTab === "string") {
+    selectAiTab(targetTab, { fetch: true });
+  } else {
+    selectAiTab(aiState.activeTab, { fetch: true });
+  }
+}
+
+function closeAiDock() {
+  if (!aiDock) return;
+  aiState.open = false;
+  aiDock.classList.remove("open");
+  aiDock.setAttribute("aria-hidden", "true");
+  if (aiToggle) {
+    aiToggle.classList.remove("hidden");
+  }
+  syncChatAvailability();
+}
+
+function selectAiTab(tabName, options = {}) {
+  const validTabs = ["insights", "alerts", "chat"];
+  const requested = validTabs.includes(tabName) ? tabName : "insights";
+  aiState.activeTab = requested;
+  aiTabs.forEach((tab) => {
+    const isActive = tab.dataset.tab === requested;
+    tab.classList.toggle("active", isActive);
+    tab.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  syncChatAvailability();
+
+  if (options.fetch && aiState.open) {
+    if (requested === "insights") {
+      doInsights({ force: options.force === true });
+    } else if (requested === "alerts") {
+      doAlerts({ force: options.force === true });
+    } else if (requested === "chat" && aiInput) {
+      aiInput.focus();
+    }
+  }
+}
+
+function syncChatAvailability() {
+  if (!aiChatForm) return;
+  const chatActive = aiState.activeTab === "chat" && aiState.open;
+  aiChatForm.classList.toggle("chat-disabled", !chatActive);
+  aiChatForm.setAttribute("aria-hidden", chatActive ? "false" : "true");
+  if (aiInput) {
+    aiInput.disabled = aiLoading || !chatActive;
+    aiInput.placeholder = chatActive
+      ? "Hỏi AI về thời tiết hoặc kế hoạch..."
+      : "Chuyển sang tab Chat để đặt câu hỏi";
+  }
+  if (btnAsk) {
+    btnAsk.disabled = aiLoading || !chatActive;
+  }
+}
 
 function initMap() {
   map = L.map("map").setView([DEFAULT_COORDS.lat, DEFAULT_COORDS.lon], 11);
@@ -40,10 +128,12 @@ function initMap() {
   marker = L.marker([DEFAULT_COORDS.lat, DEFAULT_COORDS.lon]).addTo(map);
   map.on("click", (event) => {
     const { lat, lng } = event.latlng;
+    setLastLatLon(lat, lng);
     fetchWeather(lat, lng, { label: formatCoordinateLabel(lat, lng) });
   });
 
   // Initial weather fetch for default location
+  setLastLatLon(DEFAULT_COORDS.lat, DEFAULT_COORDS.lon);
   fetchWeather(DEFAULT_COORDS.lat, DEFAULT_COORDS.lon, { label: "Hanoi, VN" });
 }
 
@@ -75,18 +165,14 @@ function handleError(error, fallbackMessage = "Something went wrong") {
 
 function setAiLoading(isLoading) {
   aiLoading = isLoading;
-  if (!aiDrawer) return;
-  aiDrawer.classList.toggle("loading", isLoading);
-  [btnInsights, btnAlerts, btnAsk].forEach((btn) => {
-    if (btn) btn.disabled = isLoading;
-  });
-  if (aiInput) {
-    aiInput.disabled = isLoading;
-  }
+  if (!aiDock) return;
+  aiDock.classList.toggle("loading", isLoading);
+  syncChatAvailability();
 }
 
 function appendAiMessage({ title, body, meta, variant = "info" }) {
   if (!aiContent) return null;
+  aiContent.querySelectorAll(".ai-hint").forEach((el) => el.remove());
   const block = document.createElement("div");
   block.className = "ai-message";
   if (variant === "error") {
@@ -173,7 +259,8 @@ async function callJSON(url, options = {}) {
     const response = await fetch(url, config);
     const data = await safeJson(response);
     if (!response.ok) {
-      const errorMessage = data?.message || data?.error || response.statusText || "AI request failed";
+      const hint = data?.hint || data?.detail;
+      const errorMessage = hint || data?.message || data?.error || response.statusText || "Yêu cầu thất bại";
       const error = new Error(errorMessage);
       error.details = data;
       error.status = response.status;
@@ -223,7 +310,8 @@ function renderAiAlerts(result) {
 
   const severityEl = document.createElement("div");
   severityEl.className = "ai-alert-severity";
-  severityEl.textContent = `Mức độ: ${analysis.severity || "—"}`;
+  const severityLabel = analysis.severity ? analysis.severity.toString().toUpperCase() : "—";
+  severityEl.textContent = `Mức độ: ${severityLabel}`;
   wrapper.appendChild(severityEl);
 
   if (Array.isArray(analysis.risks) && analysis.risks.length) {
@@ -282,9 +370,11 @@ function handleAiError(error) {
   let message = error?.message || "Không thể xử lý yêu cầu AI";
 
   if (details?.error === "OPENAI_DISABLED") {
-    message = "AI đang tắt (OPENAI_DISABLED)";
-  } else if (details?.message) {
-    message = details.message;
+    message = "AI Weather Agent chưa được bật (thiếu OPENAI_API_KEY).";
+  } else if (details?.hint) {
+    message = details.hint;
+  } else if (details?.detail) {
+    message = details.detail;
   }
 
   showToast(message);
@@ -333,6 +423,7 @@ async function searchLocation() {
       return;
     }
     const { lat, lon, name } = data;
+    setLastLatLon(lat, lon);
     updateMap(lat, lon);
     fetchWeather(lat, lon, { label: name || query });
   } catch (error) {
@@ -360,9 +451,9 @@ async function fetchWeather(lat, lon, options = {}) {
     renderHourly(data.hourly || []);
     renderDaily(data.daily || []);
     if (typeof data.location?.lat === "number" && typeof data.location?.lon === "number") {
-      lastLatLon = { lat: data.location.lat, lon: data.location.lon };
+      setLastLatLon(data.location.lat, data.location.lon);
     } else {
-      lastLatLon = { lat, lon };
+      setLastLatLon(lat, lon);
     }
   } catch (error) {
     handleError(error, "Unable to fetch weather data");
@@ -558,6 +649,7 @@ function bindEvents() {
         (position) => {
           setLoading(false);
           const { latitude, longitude } = position.coords;
+          setLastLatLon(latitude, longitude);
           updateMap(latitude, longitude);
           fetchWeather(latitude, longitude, { label: "My location" });
         },
@@ -581,36 +673,64 @@ function bindEvents() {
     });
   }
 
-  if (btnInsights) {
-    btnInsights.addEventListener("click", () => doInsights());
+  if (aiToggle) {
+    aiToggle.addEventListener("click", () => toggleAiDock());
   }
 
-  if (btnAlerts) {
-    btnAlerts.addEventListener("click", () => doAlerts());
+  if (aiClose) {
+    aiClose.addEventListener("click", () => closeAiDock());
   }
 
-  if (btnAsk) {
-    btnAsk.addEventListener("click", () => doAsk());
-  }
+  aiTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const tabName = tab.dataset.tab;
+      const isActive = aiState.activeTab === tabName;
+      selectAiTab(tabName, { fetch: true, force: isActive });
+    });
+  });
 
-  if (aiInput) {
-    aiInput.addEventListener("keyup", (event) => {
-      if (event.key === "Enter") {
-        doAsk();
+  if (aiChatForm) {
+    aiChatForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (aiState.activeTab !== "chat") {
+        openAiDock("chat");
+        return;
       }
+      doAsk();
     });
   }
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && aiState.open) {
+      closeAiDock();
+      if (aiToggle) {
+        aiToggle.focus();
+      }
+    }
+  });
+
+  syncChatAvailability();
 }
 
-async function doInsights() {
+async function doInsights(options = {}) {
+  if (!aiState.open || aiState.activeTab !== "insights") {
+    selectAiTab("insights", { fetch: true, force: true });
+    return;
+  }
   if (aiLoading) return;
   const coords = requireLatLon();
   if (!coords) return;
+
+  const now = Date.now();
+  if (!options.force && now - aiFetchTracker.insights < 8000) {
+    return;
+  }
 
   setAiLoading(true);
   try {
     const params = new URLSearchParams({ lat: coords.lat.toString(), lon: coords.lon.toString() });
     const data = await callJSON(`${API_BASE}/ai/insights?${params.toString()}`);
+    aiFetchTracker.insights = Date.now();
     renderAiInsights(data);
   } catch (error) {
     handleAiError(error);
@@ -619,15 +739,25 @@ async function doInsights() {
   }
 }
 
-async function doAlerts() {
+async function doAlerts(options = {}) {
+  if (!aiState.open || aiState.activeTab !== "alerts") {
+    selectAiTab("alerts", { fetch: true, force: true });
+    return;
+  }
   if (aiLoading) return;
   const coords = requireLatLon();
   if (!coords) return;
+
+  const now = Date.now();
+  if (!options.force && now - aiFetchTracker.alerts < 8000) {
+    return;
+  }
 
   setAiLoading(true);
   try {
     const params = new URLSearchParams({ lat: coords.lat.toString(), lon: coords.lon.toString() });
     const data = await callJSON(`${API_BASE}/ai/alerts?${params.toString()}`);
+    aiFetchTracker.alerts = Date.now();
     renderAiAlerts(data);
   } catch (error) {
     handleAiError(error);
@@ -637,6 +767,10 @@ async function doAlerts() {
 }
 
 async function doAsk() {
+  if (!aiState.open) {
+    openAiDock("chat");
+    return;
+  }
   if (aiLoading) return;
   const coords = requireLatLon();
   if (!coords) return;

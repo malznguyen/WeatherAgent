@@ -2,6 +2,20 @@
 
 A refreshed Weather Forecast Agent with a Flask backend and a responsive Leaflet-powered frontend.
 
+## Repository checklist
+
+The project already includes the required entry points and assets:
+
+- `app.py`
+- `services/weather.py`
+- `services/cache.py`
+- `services/ai.py`
+- `templates/index.html`
+- `static/app.js`
+- `static/styles.css`
+
+Environment secrets are not committed (`.env` is ignored). Use `.env.example` as a template.
+
 ## Prerequisites
 
 - Python 3.10+
@@ -17,11 +31,13 @@ pip install -r requirements.txt
 cp .env.example .env  # then add your API keys
 ```
 
-Create a `.env` file with at least:
+Edit `.env` and provide:
 
 ```
 OPENWEATHER_API_KEY=your_openweather_key
-OPENAI_API_KEY=your_openai_key
+OPENAI_API_KEY=your_openai_key  # optional for AI features
+FLASK_APP=app.py
+FLASK_ENV=development
 ```
 
 ## Running the app
@@ -37,7 +53,7 @@ The frontend is served from `/` and communicates with backend routes under `/api
 ```bash
 curl http://127.0.0.1:5000/healthz
 curl "http://127.0.0.1:5000/api/geocode?query=Hanoi"
-curl "http://127.0.0.1:5000/api/weather?lat=21.0278&lon=105.8342"
+curl "http://127.0.0.1:5000/api/weather?lat=21.0278&lon=105.8342&units=metric"
 ```
 
 ## AI Weather Agent
@@ -53,6 +69,8 @@ curl -X POST "http://127.0.0.1:5000/api/ai/ask" \
   -H "Content-Type: application/json" \
   -d '{"question":"Tối nay có cần mang áo mưa không?","lat":21.0278,"lon":105.8342}'
 ```
+
+The redesigned dashboard uses a floating 🤖 button that opens a compact AI Dock with tabs for Insights, Alerts, and Chat.
 
 The frontend now includes an AI Weather Agent drawer for quick insights, alerts, and Q&A.
 

@@ -4,7 +4,6 @@ import logging
 import os
 import sys
 import time
-import uuid
 from typing import Any, Dict, Optional, Tuple
 
 import flask
@@ -100,7 +99,7 @@ def healthz() -> Response:
 def api_geocode() -> Response:
     query = (request.args.get("query") or "").strip()
     if not query:
-        return _error_response(400, "INVALID_QUERY", "Parameter 'query' is required.")
+        return _error_response(400, "INVALID_QUERY", hint="Parameter 'query' is required.")
 
     if not OPENWEATHER_API_KEY:
         return _missing_key_response()
@@ -110,14 +109,14 @@ def api_geocode() -> Response:
     except W.MissingApiKeyError:
         return _missing_key_response()
     except W.UpstreamTimeoutError:
-        return _error_response(502, "UPSTREAM_TIMEOUT", "OpenWeather geocoding request timed out.")
+        return _error_response(502, "UPSTREAM_TIMEOUT", hint="OpenWeather geocoding request timed out.")
     except W.UpstreamServiceError as exc:
         logger.error("OpenWeather geocode error (%s): %s", exc.status_code, exc)
         status = 503 if exc.status_code >= 500 else 502
-        return _error_response(status, "UPSTREAM_ERROR", "OpenWeather geocoding failed. Please try again later.")
+        return _error_response(status, "UPSTREAM_ERROR", hint="OpenWeather geocoding failed. Please try again later.")
 
     if not result:
-        return _error_response(404, "LOCATION_NOT_FOUND", "Unable to find that location.")
+        return _error_response(404, "LOCATION_NOT_FOUND", hint="Unable to find that location.")
 
     return jsonify(result)
 
@@ -127,27 +126,36 @@ def api_weather() -> Response:
     lat = request.args.get("lat")
     lon = request.args.get("lon")
     if lat is None or lon is None:
-        return _error_response(400, "INVALID_COORDINATES", "Parameters 'lat' and 'lon' are required.")
+        return _error_response(400, "INVALID_COORDINATES", hint="Parameters 'lat' and 'lon' are required.")
 
     try:
         lat_f = float(lat)
         lon_f = float(lon)
     except ValueError:
-        return _error_response(400, "INVALID_COORDINATES", "Parameters 'lat' and 'lon' must be numbers.")
+        return _error_response(400, "INVALID_COORDINATES", hint="Parameters 'lat' and 'lon' must be numbers.")
+
+    units = (request.args.get("units") or "metric").strip().lower() or "metric"
+    allowed_units = {"standard", "metric", "imperial"}
+    if units not in allowed_units:
+        return _error_response(
+            400,
+            "INVALID_UNITS",
+            hint="Parameter 'units' must be one of standard|metric|imperial.",
+        )
 
     if not OPENWEATHER_API_KEY:
         return _missing_key_response()
 
     try:
-        data = W.get_weather(lat_f, lon_f)
+        data = W.get_weather(lat_f, lon_f, units=units)
     except W.MissingApiKeyError:
         return _missing_key_response()
     except W.UpstreamTimeoutError:
-        return _error_response(502, "UPSTREAM_TIMEOUT", "OpenWeather weather request timed out.")
+        return _error_response(502, "UPSTREAM_TIMEOUT", hint="OpenWeather weather request timed out.")
     except W.UpstreamServiceError as exc:
         logger.error("OpenWeather weather error (%s): %s", exc.status_code, exc)
         status = 503 if exc.status_code >= 500 else 502
-        return _error_response(status, "UPSTREAM_ERROR", "OpenWeather weather service is unavailable. Please try again later.")
+        return _error_response(status, "UPSTREAM_ERROR", hint="OpenWeather weather service is unavailable. Please try again later.")
 
     return jsonify(data)
 
@@ -169,17 +177,17 @@ def api_ai_insights() -> Response:
         response = _openai_disabled_response()
     except AI.AiServiceError as exc:
         logger.exception("AI insights error: %s", exc)
-        response = _ai_error_response(502, "AI_SERVICE_ERROR", str(exc))
+        response = _ai_error_response(502, "AI_ERROR", detail=str(exc))
     except W.MissingApiKeyError:
-        response = _ai_error_response(400, "MISSING_WEATHER_KEY", "OpenWeather API key is missing.")
+        response = _ai_error_response(400, "MISSING_WEATHER_KEY", hint="OpenWeather API key is missing.")
     except W.UpstreamTimeoutError:
-        response = _ai_error_response(502, "UPSTREAM_TIMEOUT", "OpenWeather request timed out.")
+        response = _ai_error_response(502, "AI_ERROR", detail="OpenWeather request timed out.")
     except W.UpstreamServiceError as exc:
         logger.error("Weather service error (%s) while building AI insights: %s", exc.status_code, exc)
-        response = _ai_error_response(502, "UPSTREAM_ERROR", "Không thể lấy dữ liệu thời tiết từ OpenWeather.")
+        response = _ai_error_response(502, "AI_ERROR", detail="Không thể lấy dữ liệu thời tiết từ OpenWeather.")
     except Exception as exc:  # pragma: no cover - defensive branch
         logger.exception("Unexpected AI insights error: %s", exc)
-        response = _ai_error_response(500, "AI_INTERNAL_ERROR", "Không thể tạo nội dung AI ngay lúc này.")
+        response = _ai_error_response(500, "AI_INTERNAL_ERROR", detail="Không thể tạo nội dung AI ngay lúc này.")
 
     _log_ai_request(lat, lon, response.status_code, started)
     return response
@@ -202,17 +210,17 @@ def api_ai_alerts() -> Response:
         response = _openai_disabled_response()
     except AI.AiServiceError as exc:
         logger.exception("AI alerts error: %s", exc)
-        response = _ai_error_response(502, "AI_SERVICE_ERROR", str(exc))
+        response = _ai_error_response(502, "AI_ERROR", detail=str(exc))
     except W.MissingApiKeyError:
-        response = _ai_error_response(400, "MISSING_WEATHER_KEY", "OpenWeather API key is missing.")
+        response = _ai_error_response(400, "MISSING_WEATHER_KEY", hint="OpenWeather API key is missing.")
     except W.UpstreamTimeoutError:
-        response = _ai_error_response(502, "UPSTREAM_TIMEOUT", "OpenWeather request timed out.")
+        response = _ai_error_response(502, "AI_ERROR", detail="OpenWeather request timed out.")
     except W.UpstreamServiceError as exc:
         logger.error("Weather service error (%s) while building AI alerts: %s", exc.status_code, exc)
-        response = _ai_error_response(502, "UPSTREAM_ERROR", "Không thể lấy dữ liệu thời tiết từ OpenWeather.")
+        response = _ai_error_response(502, "AI_ERROR", detail="Không thể lấy dữ liệu thời tiết từ OpenWeather.")
     except Exception as exc:  # pragma: no cover
         logger.exception("Unexpected AI alerts error: %s", exc)
-        response = _ai_error_response(500, "AI_INTERNAL_ERROR", "Không thể tạo cảnh báo AI ngay lúc này.")
+        response = _ai_error_response(500, "AI_INTERNAL_ERROR", detail="Không thể tạo cảnh báo AI ngay lúc này.")
 
     _log_ai_request(lat, lon, response.status_code, started)
     return response
@@ -231,7 +239,7 @@ def api_ai_ask() -> Response:
     lon: Optional[float] = None
 
     if not question or lat_raw is None or lon_raw is None:
-        response = _ai_error_response(400, "BAD_REQUEST", "Body phải gồm 'question', 'lat', 'lon'.")
+        response = _ai_error_response(400, "BAD_REQUEST", hint="Body phải gồm 'question', 'lat', 'lon'.")
         _log_ai_request(lat, lon, response.status_code, started)
         return response
 
@@ -239,7 +247,7 @@ def api_ai_ask() -> Response:
         lat = float(lat_raw)
         lon = float(lon_raw)
     except (TypeError, ValueError):
-        response = _ai_error_response(400, "BAD_REQUEST", "Giá trị 'lat' và 'lon' phải là số.")
+        response = _ai_error_response(400, "BAD_REQUEST", hint="Giá trị 'lat' và 'lon' phải là số.")
         _log_ai_request(lat, lon, response.status_code, started)
         return response
 
@@ -252,17 +260,17 @@ def api_ai_ask() -> Response:
         response = _openai_disabled_response()
     except AI.AiServiceError as exc:
         logger.exception("AI chat error: %s", exc)
-        response = _ai_error_response(502, "AI_SERVICE_ERROR", str(exc))
+        response = _ai_error_response(502, "AI_ERROR", detail=str(exc))
     except W.MissingApiKeyError:
-        response = _ai_error_response(400, "MISSING_WEATHER_KEY", "OpenWeather API key is missing.")
+        response = _ai_error_response(400, "MISSING_WEATHER_KEY", hint="OpenWeather API key is missing.")
     except W.UpstreamTimeoutError:
-        response = _ai_error_response(502, "UPSTREAM_TIMEOUT", "OpenWeather request timed out.")
+        response = _ai_error_response(502, "AI_ERROR", detail="OpenWeather request timed out.")
     except W.UpstreamServiceError as exc:
         logger.error("Weather service error (%s) while handling AI chat: %s", exc.status_code, exc)
-        response = _ai_error_response(502, "UPSTREAM_ERROR", "Không thể lấy dữ liệu thời tiết từ OpenWeather.")
+        response = _ai_error_response(502, "AI_ERROR", detail="Không thể lấy dữ liệu thời tiết từ OpenWeather.")
     except Exception as exc:  # pragma: no cover
         logger.exception("Unexpected AI chat error: %s", exc)
-        response = _ai_error_response(500, "AI_INTERNAL_ERROR", "Không thể trả lời câu hỏi ngay lúc này.")
+        response = _ai_error_response(500, "AI_INTERNAL_ERROR", detail="Không thể trả lời câu hỏi ngay lúc này.")
 
     _log_ai_request(lat, lon, response.status_code, started)
     return response
@@ -272,31 +280,46 @@ def _missing_key_response() -> Response:
     return _error_response(
         400,
         "MISSING_API_KEY",
-        "OpenWeather API key is missing. Set OPENWEATHER_API_KEY in your .env file.",
+        hint="OpenWeather API key is missing. Set OPENWEATHER_API_KEY in your .env file.",
     )
 
 
-def _error_response(status_code: int, error_code: str, message: str) -> Response:
-    payload: Dict[str, Any] = {"error": error_code, "message": message}
+def _error_response(
+    status_code: int,
+    error_code: str,
+    *,
+    hint: Optional[str] = None,
+    detail: Optional[str] = None,
+) -> Response:
+    payload: Dict[str, Any] = {"error": error_code, "code": status_code}
+    if hint:
+        payload["hint"] = hint
+    if detail:
+        payload["detail"] = detail
     response = jsonify(payload)
     response.status_code = status_code
     return response
 
 
 def _openai_disabled_response() -> Response:
-    return _ai_error_response(400, "OPENAI_DISABLED")
+    return _ai_error_response(400, "OPENAI_DISABLED", hint="OpenAI API key is missing.")
 
 
-def _ai_error_response(status_code: int, error_code: str, message: Optional[str] = None) -> Response:
-    trace_id = str(uuid.uuid4())
-    payload: Dict[str, Any] = {
-        "error": error_code,
-        "trace_id": trace_id,
-        "model": None,
-        "took_ms": 0,
-    }
-    if message:
-        payload["message"] = message
+def _ai_error_response(
+    status_code: int,
+    error_code: str,
+    *,
+    hint: Optional[str] = None,
+    detail: Optional[str] = None,
+    trace_id: Optional[str] = None,
+) -> Response:
+    payload: Dict[str, Any] = {"error": error_code}
+    if hint:
+        payload["hint"] = hint
+    if detail:
+        payload["detail"] = detail
+    if trace_id:
+        payload["trace_id"] = trace_id
     response = jsonify(payload)
     response.status_code = status_code
     return response
@@ -306,13 +329,13 @@ def _parse_coordinates_from_query() -> Tuple[Optional[float], Optional[float], O
     lat_str = request.args.get("lat")
     lon_str = request.args.get("lon")
     if lat_str is None or lon_str is None:
-        return None, None, _ai_error_response(400, "BAD_REQUEST", "?lat=..&lon=..")
+        return None, None, _ai_error_response(400, "BAD_REQUEST", hint="Thiếu tham số ?lat=..&lon=..")
 
     try:
         lat = float(lat_str)
         lon = float(lon_str)
     except ValueError:
-        return None, None, _ai_error_response(400, "BAD_REQUEST", "?lat=..&lon=..")
+        return None, None, _ai_error_response(400, "BAD_REQUEST", hint="lat/lon phải là số hợp lệ")
 
     return lat, lon, None
 

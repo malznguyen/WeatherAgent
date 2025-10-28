@@ -122,11 +122,15 @@ def geocode(query: str) -> Optional[Dict[str, Any]]:
     return location
 
 
-def get_weather(lat: float, lon: float) -> Dict[str, Any]:
+def get_weather(lat: float, lon: float, units: str = "metric") -> Dict[str, Any]:
     """Fetch weather information for the provided coordinates."""
     _ensure_api_key()
 
-    cache_key = f"weather:{lat:.4f}:{lon:.4f}"
+    normalized_units = (units or "metric").lower()
+    if normalized_units not in {"metric", "imperial", "standard"}:
+        normalized_units = "metric"
+
+    cache_key = f"weather:{normalized_units}:{lat:.4f}:{lon:.4f}"
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
@@ -135,13 +139,13 @@ def get_weather(lat: float, lon: float) -> Dict[str, Any]:
     params = {
         "lat": lat,
         "lon": lon,
-        "units": "metric",
+        "units": normalized_units,
         "exclude": "minutely,alerts",
         "appid": _API_KEY,
     }
 
     data = _fetch_weather_payload(session, params)
-    normalized = _normalize_weather_response(data, lat, lon)
+    normalized = _normalize_weather_response(data, lat, lon, normalized_units)
     cache.set(cache_key, normalized, CACHE_TTL_SECONDS)
     return normalized
 
@@ -184,7 +188,7 @@ def _fetch_weather_payload(session: Session, params: Dict[str, Any]) -> Dict[str
     raise UpstreamServiceError("OpenWeather weather request failed", 503)
 
 
-def _normalize_weather_response(data: Dict[str, Any], lat: float, lon: float) -> Dict[str, Any]:
+def _normalize_weather_response(data: Dict[str, Any], lat: float, lon: float, units: str) -> Dict[str, Any]:
     current = _normalize_current(data.get("current", {}))
     hourly = [_normalize_hourly(item) for item in data.get("hourly", [])[:12]]
     daily = [_normalize_daily(item) for item in data.get("daily", [])[:7]]
@@ -197,6 +201,7 @@ def _normalize_weather_response(data: Dict[str, Any], lat: float, lon: float) ->
         "daily": daily,
         "provider": "openweather",
         "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "units": units,
     }
 
 

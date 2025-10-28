@@ -6,8 +6,8 @@
     <title>Weather Forecast Agent</title>
     <link
       rel="stylesheet"
-      href="https://unpkg.com/leaflet/dist/leaflet.css"
-      integrity="sha256-sA+e2atOtd2xbYvA0C7UcGgrffp4nHkP4NL3Pj0LC+o="
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
       crossorigin=""
     />
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
@@ -88,24 +88,44 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <div id="ai-drawer" class="ai-drawer">
-      <div class="ai-header">AI Weather Agent</div>
-      <div id="ai-content" class="ai-content">
-        <div class="ai-hint">Chọn vị trí rồi bấm Insights/Alerts, hoặc đặt câu hỏi.</div>
+    <button
+      id="ai-toggle"
+      class="ai-float-btn"
+      type="button"
+      aria-label="Mở AI Weather Agent"
+    >
+      🤖
+    </button>
+
+    <aside id="ai-dock" class="ai-dock" aria-hidden="true">
+      <div class="ai-dock-header">
+        <h3>AI Weather Agent</h3>
+        <button id="ai-close" class="ai-close" type="button" aria-label="Đóng">×</button>
       </div>
-      <div class="ai-actions">
-        <button id="btn-insights">Insights</button>
-        <button id="btn-alerts">Alerts</button>
+      <div class="ai-dock-tabs" role="tablist">
+        <button class="ai-tab active" data-tab="insights" role="tab" aria-selected="true">Insights</button>
+        <button class="ai-tab" data-tab="alerts" role="tab" aria-selected="false">Alerts</button>
+        <button class="ai-tab" data-tab="chat" role="tab" aria-selected="false">Chat</button>
       </div>
-      <div class="ai-chat">
-        <input id="ai-input" placeholder="Hỏi AI về thời tiết/kế hoạch..." />
-        <button id="btn-ask">Ask</button>
+      <div id="ai-content" class="ai-dock-content" role="region" aria-live="polite">
+        <div class="ai-hint">Chọn vị trí trên bản đồ hoặc tìm kiếm trước khi dùng AI.</div>
       </div>
-    </div>
+      <form id="ai-chat-form" class="ai-dock-chat" novalidate>
+        <input
+          id="ai-input"
+          name="question"
+          type="text"
+          autocomplete="off"
+          placeholder="Hỏi AI về thời tiết hoặc kế hoạch..."
+          aria-label="Câu hỏi cho AI"
+        />
+        <button id="btn-ask" type="submit">Gửi</button>
+      </form>
+    </aside>
 
     <script
-      src="https://unpkg.com/leaflet/dist/leaflet.js"
-      integrity="sha256-o9N1j7kS1tVWfEy3aMT2xrHAt1dFUIrTVnEa1MZd2Qw="
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
       crossorigin=""
     ></script>
     <script src="{{ url_for('static', filename='app.js') }}" defer></script>
