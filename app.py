@@ -1,231 +1,161 @@
-"""Flask application entry point for WeatherAgent."""
 from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Tuple
+import sys
+import time
+from typing import Any, Dict
 
+import flask
+import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, g
+from flask_cors import CORS
 
-def _load_required_api_keys() -> Tuple[str, str]:
-    """Load the API keys required for the application to operate."""
+from services import weather as weather_service
 
-    load_dotenv()
+load_dotenv()
 
-    openweather_api_key = os.getenv("OPENWEATHER_API_KEY", "").strip()
-    openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger("weather-agent")
 
-    missing_keys = [
-        name
-        for name, value in (
-            ("OPENWEATHER_API_KEY", openweather_api_key),
-            ("OPENAI_API_KEY", openai_api_key),
+OPENWEATHER_API_KEY = (os.getenv("OPENWEATHER_API_KEY") or "").strip()
+OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
+
+
+def mask_key(value: str) -> str:
+    if not value:
+        return "(not set)"
+    trimmed = value.strip()
+    if len(trimmed) <= 4:
+        return "****"
+    return f"****{trimmed[-4:]}"
+
+
+logger.info(
+    "Starting Weather Forecast Agent | Flask=%s | Requests=%s",
+    flask.__version__,
+    requests.__version__,
+)
+logger.info("OpenWeather API key: %s", mask_key(OPENWEATHER_API_KEY))
+logger.info("OpenAI API key: %s", mask_key(OPENAI_API_KEY))
+
+if OPENAI_API_KEY and "\n" in OPENAI_API_KEY:
+    logger.warning("OPENAI_API_KEY appears to contain newline characters. Ensure it is on a single line in the .env file.")
+
+app = Flask(__name__, static_folder="static", template_folder="templates")
+CORS(app, resources={r"/api/*": {"origins": "*"}})
+weather_service.configure(OPENWEATHER_API_KEY, logger=logger)
+
+
+@app.before_request
+def start_timer() -> None:
+    if request.path.startswith("/api/"):
+        g.request_started = time.perf_counter()
+
+
+@app.after_request
+def log_request(response: Response) -> Response:
+    if request.path.startswith("/api/"):
+        started = getattr(g, "request_started", None)
+        latency_ms = (time.perf_counter() - started) * 1000 if started else 0.0
+        query_string = request.query_string.decode("utf-8", "ignore")
+        query_display = f"?{query_string}" if query_string else ""
+        logger.info(
+            "API request %s %s%s -> %s (%.2f ms)",
+            request.method,
+            request.path,
+            query_display,
+            response.status_code,
+            latency_ms,
         )
-        if not value
-    ]
-
-    if missing_keys:
-        missing_list = ", ".join(missing_keys)
-        raise RuntimeError(
-            f"Missing required environment variable(s): {missing_list}."
-        )
-
-    return openweather_api_key, openai_api_key
-
-
-# Configure basic logging for the application.
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-def init_data_agent(api_key: str) -> Any:
-    """Initialise the DataAgent instance.
-
-    If the concrete implementation is not yet available, a placeholder agent is
-    returned that raises ``NotImplementedError`` when used.
-    """
-
-    try:
-        from agents import data_agent as data_agent_module
-
-        data_agent_cls = getattr(data_agent_module, "DataAgent", None)
-        if data_agent_cls is None:
-            raise AttributeError("DataAgent class not implemented yet.")
-        return data_agent_cls(api_key)
-    except Exception as exc:  # pragma: no cover - defensive fallback
-        logger.warning("Using placeholder DataAgent due to: %s", exc)
-
-        class _PlaceholderDataAgent:
-            def get_forecast(self, city: str) -> Dict[str, Any]:
-                raise NotImplementedError("DataAgent.get_forecast is not implemented.")
-
-        return _PlaceholderDataAgent()
-
-
-def init_analysis_agent(api_key: str) -> Any:
-    """Initialise the AnalysisAgent instance.
-
-    Similar to :func:`init_data_agent`, a placeholder implementation is
-    provided until the concrete agent is implemented elsewhere in the codebase.
-    """
-
-    try:
-        from agents import analysis_agent as analysis_agent_module
-
-        analysis_agent_cls = getattr(analysis_agent_module, "AnalysisAgent", None)
-        if analysis_agent_cls is None:
-            raise AttributeError("AnalysisAgent class not implemented yet.")
-        return analysis_agent_cls(api_key)
-    except Exception as exc:  # pragma: no cover - defensive fallback
-        logger.warning("Using placeholder AnalysisAgent due to: %s", exc)
-
-        class _PlaceholderAnalysisAgent:
-            def process_forecast(self, forecast: Dict[str, Any]) -> Dict[str, Any]:
-                raise NotImplementedError(
-                    "AnalysisAgent.process_forecast is not implemented."
-                )
-
-        return _PlaceholderAnalysisAgent()
-
-
-try:
-    OPENWEATHER_API_KEY, OPENAI_API_KEY = _load_required_api_keys()
-except RuntimeError as error:
-    logger.error("Application configuration error: %s", error)
-    raise
-
-
-app = Flask(__name__)
-
-data_agent = init_data_agent(OPENWEATHER_API_KEY)
-analysis_agent = init_analysis_agent(OPENAI_API_KEY)
+    return response
 
 
 @app.route("/")
 def index() -> str:
-    """Render the landing page."""
-
-    return render_template("index.html", weather_api_key=OPENWEATHER_API_KEY)
+    return render_template("index.html")
 
 
-@app.post("/api/forecast")
-def forecast() -> Any:
-    """Return processed forecast information for the given city."""
+@app.route("/healthz")
+def healthz() -> Response:
+    return jsonify({"status": "ok"})
 
-    payload = request.get_json(silent=True) or {}
-    city = payload.get("city")
 
-    if not city:
-        return jsonify({"error": "Missing 'city' in request payload."}), 400
+@app.route("/api/geocode")
+def api_geocode() -> Response:
+    query = (request.args.get("query") or "").strip()
+    if not query:
+        return _error_response(400, "INVALID_QUERY", "Parameter 'query' is required.")
 
-    try:
-        raw_forecast = _fetch_raw_forecast(city)
-    except NotImplementedError as exc:
-        logger.error("DataAgent is not ready: %s", exc)
-        return jsonify({"error": str(exc)}), 501
-
-    if raw_forecast is None:
-        logger.error("DataAgent returned no forecast data for city '%s'", city)
-        return jsonify({"error": "Unable to retrieve forecast data."}), 502
+    if not OPENWEATHER_API_KEY:
+        return _missing_key_response()
 
     try:
-        processed_forecast = _process_forecast(raw_forecast)
-    except NotImplementedError as exc:
-        logger.error("AnalysisAgent is not ready: %s", exc)
-        return jsonify({"error": str(exc)}), 501
+        result = weather_service.geocode(query)
+    except weather_service.MissingApiKeyError:
+        return _missing_key_response()
+    except weather_service.UpstreamTimeoutError:
+        return _error_response(502, "UPSTREAM_TIMEOUT", "OpenWeather geocoding request timed out.")
+    except weather_service.UpstreamServiceError as exc:
+        logger.error("OpenWeather geocode error (%s): %s", exc.status_code, exc)
+        status = 503 if exc.status_code >= 500 else 502
+        return _error_response(status, "UPSTREAM_ERROR", "OpenWeather geocoding failed. Please try again later.")
 
-    final_response = _prepare_final_response(raw_forecast, processed_forecast)
+    if not result:
+        return _error_response(404, "LOCATION_NOT_FOUND", "Unable to find that location.")
 
-    return jsonify(final_response)
+    return jsonify(result)
 
 
-def _process_forecast(raw_forecast: Dict[str, Any]) -> Dict[str, Any]:
-    """Run the forecast data through the analysis agent."""
+@app.route("/api/weather")
+def api_weather() -> Response:
+    lat = request.args.get("lat")
+    lon = request.args.get("lon")
+    if lat is None or lon is None:
+        return _error_response(400, "INVALID_COORDINATES", "Parameters 'lat' and 'lon' are required.")
 
     try:
-        return analysis_agent.generate_insights(raw_forecast)
-    except AttributeError as error:  # pragma: no cover - defensive fallback
-        raise NotImplementedError(
-            "AnalysisAgent lacks the 'generate_insights' method."
-        ) from error
+        lat_f = float(lat)
+        lon_f = float(lon)
+    except ValueError:
+        return _error_response(400, "INVALID_COORDINATES", "Parameters 'lat' and 'lon' must be numbers.")
 
-
-def _fetch_raw_forecast(city: str) -> Any:
-    """Obtain the forecast from the configured data agent."""
+    if not OPENWEATHER_API_KEY:
+        return _missing_key_response()
 
     try:
-        return data_agent.fetch_forecast(city)
-    except AttributeError as error:  # pragma: no cover - defensive fallback
-        raise NotImplementedError(
-            "DataAgent lacks the 'fetch_forecast' method."
-        ) from error
+        data = weather_service.get_weather(lat_f, lon_f)
+    except weather_service.MissingApiKeyError:
+        return _missing_key_response()
+    except weather_service.UpstreamTimeoutError:
+        return _error_response(502, "UPSTREAM_TIMEOUT", "OpenWeather weather request timed out.")
+    except weather_service.UpstreamServiceError as exc:
+        logger.error("OpenWeather weather error (%s): %s", exc.status_code, exc)
+        status = 503 if exc.status_code >= 500 else 502
+        return _error_response(status, "UPSTREAM_ERROR", "OpenWeather weather service is unavailable. Please try again later.")
+
+    return jsonify(data)
 
 
-def _degrees_to_cardinal(degrees: float) -> str:
-    """Convert wind direction in degrees to a cardinal representation."""
-
-    directions = [
-        "N",
-        "NNE",
-        "NE",
-        "ENE",
-        "E",
-        "ESE",
-        "SE",
-        "SSE",
-        "S",
-        "SSW",
-        "SW",
-        "WSW",
-        "W",
-        "WNW",
-        "NW",
-        "NNW",
-    ]
-    index = int((degrees % 360) / 22.5 + 0.5) % len(directions)
-    return directions[index]
+def _missing_key_response() -> Response:
+    return _error_response(
+        400,
+        "MISSING_API_KEY",
+        "OpenWeather API key is missing. Set OPENWEATHER_API_KEY in your .env file.",
+    )
 
 
-def _prepare_final_response(
-    raw_data: Dict[str, Any], analysis_results: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Combine raw forecast data and AI insights into the final payload."""
-
-    city_info = raw_data.get("city", {})
-    forecast_items = raw_data.get("list", [])
-    first_entry = forecast_items[0] if forecast_items else {}
-    main_data = first_entry.get("main", {})
-    wind_data = first_entry.get("wind", {})
-
-    current_temp = main_data.get("temp")
-    feels_like = main_data.get("feels_like")
-    humidity = main_data.get("humidity")
-
-    wind_speed_ms = wind_data.get("speed")
-    wind_direction_deg = wind_data.get("deg")
-
-    wind_components = []
-    if wind_speed_ms is not None:
-        wind_speed_kmh = wind_speed_ms * 3.6
-        wind_components.append(f"{round(wind_speed_kmh)} km/h")
-    if wind_direction_deg is not None:
-        wind_components.append(_degrees_to_cardinal(float(wind_direction_deg)))
-
-    final_payload: Dict[str, Any] = {
-        "city": city_info.get("name", ""),
-        "current_temp": round(current_temp) if isinstance(current_temp, (int, float)) else current_temp,
-        "feels_like": round(feels_like) if isinstance(feels_like, (int, float)) else feels_like,
-        "humidity": f"{humidity}%" if humidity is not None else "",
-        "wind": " ".join(wind_components) if wind_components else "",
-        "ai_alert": str(analysis_results.get("alert", "")),
-        "ai_summary": str(analysis_results.get("summary", "")),
-        "ai_advice": str(analysis_results.get("advice", "")),
-    }
-
-    return final_payload
+def _error_response(status_code: int, error_code: str, message: str) -> Response:
+    payload: Dict[str, Any] = {"error": error_code, "message": message}
+    response = jsonify(payload)
+    response.status_code = status_code
+    return response
 
 
 if __name__ == "__main__":
-    logger.info("Starting WeatherAgent Flask application.")
     app.run(debug=True)

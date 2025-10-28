@@ -1,365 +1,98 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Agent Weather Forecast Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Weather Forecast Agent</title>
     <link
-        rel="stylesheet"
-        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha256-sA+zWATbFveLLNqWO2NDVABvZbH1BtF5GS3Jx04oRyk="
-        crossorigin=""
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet/dist/leaflet.css"
+      integrity="sha256-sA+e2atOtd2xbYvA0C7UcGgrffp4nHkP4NL3Pj0LC+o="
+      crossorigin=""
     />
-    <script
-        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-        integrity="sha256-o9N1j7kGStKzHkFhwbYFfZQc36gsv1Yx0f2D1u9t0wY="
-        crossorigin=""
-        defer
-    ></script>
-    <script>
-        window.OPENWEATHER_API_KEY = {{ weather_api_key | default('', true) | tojson | safe }};
-    </script>
-</head>
-<body class="bg-gray-900 text-gray-100 min-h-screen">
-    <div class="flex min-h-screen">
-        <!-- Left Sidebar -->
-        <aside class="w-52 bg-gray-800 flex flex-col justify-between p-6">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="branding">
+        <h1>Weather Forecast Agent</h1>
+        <p class="subtitle">Plan your day with up-to-date forecasts</p>
+      </div>
+      <div class="search-bar">
+        <input
+          id="search-input"
+          type="search"
+          placeholder="Search city or address…"
+          autocomplete="off"
+        />
+        <button id="search-btn" class="primary">Search</button>
+        <button id="location-btn" class="secondary">Use my location</button>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="map-section">
+        <div id="map" aria-label="Weather map"></div>
+      </section>
+
+      <section class="current-section card">
+        <div class="card-header">
+          <h2>Current Conditions</h2>
+          <span id="location-label" class="location-label">—</span>
+        </div>
+        <div id="current-weather" class="current-weather">
+          <div class="current-primary">
+            <img id="current-icon" alt="" class="weather-icon" />
             <div>
-                <div class="flex items-center space-x-3 mb-8">
-                    <div class="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-cyan-500"></div>
-                    <div>
-                        <h1 class="text-lg font-semibold">Weather Agent</h1>
-                        <p class="text-xs text-gray-400">Intelligent Dashboard</p>
-                    </div>
-                </div>
-                <nav class="space-y-4">
-                    <a href="#" class="block text-sm font-medium text-gray-200 hover:text-white">Home</a>
-                    <a href="#" class="block text-sm font-medium text-gray-200 hover:text-white">Reports</a>
-                    <a href="#" class="block text-sm font-medium text-gray-200 hover:text-white">Settings</a>
-                </nav>
+              <div id="current-temp" class="temperature">—</div>
+              <div id="current-description" class="description">Select a location to begin</div>
             </div>
-            <label class="flex items-center space-x-2 text-xs text-gray-300">
-                <span>Dark Mode</span>
-                <input type="checkbox" class="form-checkbox h-4 w-4 text-indigo-500 rounded" checked>
-            </label>
-        </aside>
+          </div>
+          <div class="current-details">
+            <div><span class="label">Feels like</span><span id="current-feels">—</span></div>
+            <div><span class="label">Wind</span><span id="current-wind">—</span></div>
+            <div><span class="label">Humidity</span><span id="current-humidity">—</span></div>
+            <div><span class="label">UV Index</span><span id="current-uvi">—</span></div>
+          </div>
+        </div>
+      </section>
 
-        <!-- Main Content -->
-        <main class="flex-1 p-8 space-y-8 overflow-y-auto">
-            <!-- Search Section -->
-            <section class="bg-gray-800/60 backdrop-blur rounded-xl border border-gray-700 p-6">
-                <div class="flex flex-col lg:flex-row lg:items-center lg:space-x-6 space-y-4 lg:space-y-0">
-                    <div class="flex-1">
-                        <h2 class="text-2xl font-semibold">City Analysis</h2>
-                        <p class="text-sm text-gray-400">Enter a location to run the multi-agent weather analysis workflow.</p>
-                    </div>
-                    <div class="flex-1 flex items-center space-x-3">
-                        <input
-                            id="city-input"
-                            type="text"
-                            placeholder="Search for a city (e.g., Hanoi)"
-                            class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        >
-                        <button
-                            id="run-analysis"
-                            class="px-5 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-semibold"
-                        >
-                            Run Analysis
-                        </button>
-                    </div>
-                </div>
-            </section>
+      <section class="hourly-section card">
+        <div class="card-header">
+          <h2>Next 12 Hours</h2>
+        </div>
+        <div id="hourly-forecast" class="hourly-list"></div>
+      </section>
 
-            <!-- Current Conditions -->
-            <section class="grid md:grid-cols-3 gap-6">
-                <div class="md:col-span-2 bg-gray-800/60 border border-gray-700 rounded-xl p-6 flex flex-col justify-between">
-                    <div>
-                        <p class="text-sm uppercase tracking-widest text-indigo-400">Current Temperature</p>
-                        <div class="flex items-end space-x-3 mt-3">
-                            <span id="current-temp" class="text-5xl font-bold">--°C</span>
-                            <span class="text-sm text-gray-400 mb-2">Feels like <span id="feels-like">--°C</span></span>
-                        </div>
-                        <p class="text-sm text-gray-400 mt-3">Latest forecast sourced from the Data Agent and processed through the Analysis Agent.</p>
-                    </div>
-                    <div class="mt-6 text-sm text-gray-400">
-                        <p><span class="text-gray-200">Humidity:</span> <span id="humidity">--%</span></p>
-                        <p><span class="text-gray-200">Wind:</span> <span id="wind">-- km/h</span></p>
-                    </div>
-                </div>
-                <div class="bg-gray-800/60 border border-gray-700 rounded-xl p-6">
-                    <h3 class="text-lg font-semibold mb-4">Agent Status</h3>
-                    <ul class="space-y-3 text-sm">
-                        <li class="flex items-start space-x-3">
-                            <span class="w-2 h-2 mt-1 rounded-full bg-emerald-400"></span>
-                            <div>
-                                <p class="text-gray-200 font-medium">Data Agent</p>
-                                <p class="text-gray-400">Streaming OpenWeatherMap datasets.</p>
-                            </div>
-                        </li>
-                        <li class="flex items-start space-x-3">
-                            <span class="w-2 h-2 mt-1 rounded-full bg-emerald-400"></span>
-                            <div>
-                                <p class="text-gray-200 font-medium">Analysis Agent</p>
-                                <p class="text-gray-400">Generating tailored advisories via GPT model.</p>
-                            </div>
-                        </li>
-                        <li class="flex items-start space-x-3">
-                            <span class="w-2 h-2 mt-1 rounded-full bg-amber-400"></span>
-                            <div>
-                                <p class="text-gray-200 font-medium">Interface Agent</p>
-                                <p class="text-gray-400">Awaiting user instructions.</p>
-                            </div>
-                        </li>
-                    </ul>
-                </div>
-            </section>
+      <section class="daily-section card">
+        <div class="card-header">
+          <h2>7-Day Outlook</h2>
+        </div>
+        <div class="table-wrapper">
+          <table id="daily-forecast">
+            <thead>
+              <tr>
+                <th scope="col">Day</th>
+                <th scope="col">Conditions</th>
+                <th scope="col">Min</th>
+                <th scope="col">Max</th>
+                <th scope="col">POP</th>
+                <th scope="col">Wind</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
 
-            <!-- Map Section -->
-            <section class="bg-gray-800/60 border border-gray-700 rounded-xl p-6">
-                <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-lg font-semibold">Weather Map</h3>
-                    <span class="text-xs text-gray-400">Leaflet visualization centered on Hanoi</span>
-                </div>
-                <div id="weather-map" class="rounded-lg overflow-hidden shadow-lg border border-gray-700" style="height: 400px;"></div>
-            </section>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-            <!-- Hourly Forecast -->
-            <section>
-                <h3 class="text-lg font-semibold mb-4">Hourly Forecast</h3>
-                <div class="flex space-x-4 overflow-x-auto pb-2">
-                    <template id="forecast-card-template">
-                        <div class="min-w-[150px] bg-gray-800/60 border border-gray-700 rounded-xl p-4 flex flex-col items-center text-center">
-                            <p class="text-sm text-gray-400">00:00</p>
-                            <span class="text-3xl my-3">🌙</span>
-                            <p class="text-xl font-semibold">25°C</p>
-                        </div>
-                    </template>
-                    <div class="min-w-[150px] bg-gray-800/60 border border-gray-700 rounded-xl p-4 flex flex-col items-center text-center">
-                        <p class="text-sm text-gray-400">06:00</p>
-                        <span class="text-3xl my-3">🌥️</span>
-                        <p class="text-xl font-semibold">24°C</p>
-                    </div>
-                    <div class="min-w-[150px] bg-gray-800/60 border border-gray-700 rounded-xl p-4 flex flex-col items-center text-center">
-                        <p class="text-sm text-gray-400">09:00</p>
-                        <span class="text-3xl my-3">🌤️</span>
-                        <p class="text-xl font-semibold">27°C</p>
-                    </div>
-                    <div class="min-w-[150px] bg-gray-800/60 border border-gray-700 rounded-xl p-4 flex flex-col items-center text-center">
-                        <p class="text-sm text-gray-400">12:00</p>
-                        <span class="text-3xl my-3">☀️</span>
-                        <p class="text-xl font-semibold">31°C</p>
-                    </div>
-                    <div class="min-w-[150px] bg-gray-800/60 border border-gray-700 rounded-xl p-4 flex flex-col items-center text-center">
-                        <p class="text-sm text-gray-400">15:00</p>
-                        <span class="text-3xl my-3">🌦️</span>
-                        <p class="text-xl font-semibold">29°C</p>
-                    </div>
-                    <div class="min-w-[150px] bg-gray-800/60 border border-gray-700 rounded-xl p-4 flex flex-col items-center text-center">
-                        <p class="text-sm text-gray-400">18:00</p>
-                        <span class="text-3xl my-3">🌧️</span>
-                        <p class="text-xl font-semibold">26°C</p>
-                    </div>
-                    <div class="min-w-[150px] bg-gray-800/60 border border-gray-700 rounded-xl p-4 flex flex-col items-center text-center">
-                        <p class="text-sm text-gray-400">21:00</p>
-                        <span class="text-3xl my-3">🌙</span>
-                        <p class="text-xl font-semibold">23°C</p>
-                    </div>
-                </div>
-            </section>
-        </main>
-
-        <!-- Right Sidebar -->
-        <aside class="w-[250px] bg-gray-800 border-l border-gray-700 p-6 space-y-8">
-            <section>
-                <h3 class="text-lg font-semibold mb-4">Alerts</h3>
-                <div class="space-y-4">
-                    <div
-                        id="alert-card"
-                        class="p-4 rounded-lg bg-amber-500/20 border border-amber-500 transition-colors duration-200"
-                    >
-                        <p id="alert-title" class="text-sm font-semibold text-amber-100">
-                            Cold Advisory - Below 15°C
-                        </p>
-                        <p id="alert-description" class="text-xs text-amber-100 mt-2">
-                            Northern highlands will see rapid temperature drops overnight.
-                        </p>
-                    </div>
-                    <div
-                        id="no-alert-card"
-                        class="hidden p-4 rounded-lg bg-gray-900 border border-gray-700 text-sm text-gray-300"
-                    >
-                        <p>Không có cảnh báo nghiêm trọng tại thời điểm này.</p>
-                    </div>
-                </div>
-            </section>
-            <section>
-                <h3 class="text-lg font-semibold mb-4">AI Insights</h3>
-                <div class="bg-gray-900 border border-gray-700 rounded-xl p-4 text-sm text-gray-300">
-                    <p id="ai-summary-text">
-                        AI Agent Summary: The system predicts the cold front will arrive sooner than expected, impacting Northern
-                        crops.
-                    </p>
-                </div>
-            </section>
-        </aside>
-    </div>
-
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const weatherApiKey = window.OPENWEATHER_API_KEY || '';
-            const map = L.map('weather-map').setView([21.0285, 105.8542], 11);
-
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                maxZoom: 19,
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            }).addTo(map);
-
-            if (weatherApiKey) {
-                L.tileLayer(
-                    `https://tile.openweathermap.org/map/precipitation_new/{z}/{x}/{y}.png?appid=${weatherApiKey}`,
-                    {
-                        opacity: 0.7
-                    }
-                ).addTo(map);
-            }
-
-            L.marker([21.0285, 105.8542])
-                .addTo(map)
-                .bindPopup('Hà Nội - Central Forecast Focus')
-                .openPopup();
-
-            const runAnalysisButton = document.getElementById('run-analysis');
-            const cityInput = document.getElementById('city-input');
-            const currentTempElement = document.getElementById('current-temp');
-            const feelsLikeElement = document.getElementById('feels-like');
-            const humidityElement = document.getElementById('humidity');
-            const windElement = document.getElementById('wind');
-            const aiSummaryText = document.getElementById('ai-summary-text');
-            const alertCard = document.getElementById('alert-card');
-            const alertTitle = document.getElementById('alert-title');
-            const alertDescription = document.getElementById('alert-description');
-            const noAlertCard = document.getElementById('no-alert-card');
-
-            const alertDictionary = {
-                COLD_ADVISORY: {
-                    title: 'Cảnh báo Rét Đậm',
-                    description: 'Nhiệt độ được dự báo giảm sâu. Chuẩn bị áo ấm và bảo vệ cây trồng.'
-                },
-                WIND_ALERT: {
-                    title: 'Cảnh báo Gió Mạnh',
-                    description: 'Gió giật mạnh có thể ảnh hưởng đến mái nhà và cây cối. Hạn chế di chuyển ngoài trời.'
-                },
-                STORM_WARNING: {
-                    title: 'Cảnh báo Bão',
-                    description: 'Mưa to và giông mạnh có khả năng xuất hiện. Theo dõi cập nhật mới và chuẩn bị sơ tán nếu cần.'
-                }
-            };
-
-            function showAlertCard(alertKey) {
-                const alertContent = alertDictionary[alertKey] || {
-                    title: 'Cảnh báo Thời tiết',
-                    description: 'Điều kiện thời tiết khắc nghiệt được dự báo. Theo dõi thêm thông tin chi tiết.'
-                };
-
-                alertCard.classList.remove('hidden');
-                noAlertCard.classList.add('hidden');
-                alertTitle.textContent = alertContent.title;
-                alertDescription.textContent = alertContent.description;
-            }
-
-            function showNoAlertCard() {
-                alertCard.classList.add('hidden');
-                noAlertCard.classList.remove('hidden');
-            }
-
-            async function fetchDataAndRender(city) {
-                if (!city) {
-                    return;
-                }
-
-                try {
-                    const response = await fetch('/api/forecast', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ city })
-                    });
-
-                    if (!response.ok) {
-                        throw new Error(`Network response was not ok: ${response.status}`);
-                    }
-
-                    const data = await response.json();
-
-                    if (data) {
-                        const {
-                            current_temp,
-                            feels_like,
-                            humidity,
-                            wind,
-                            ai_summary,
-                            ai_alert
-                        } = data;
-
-                        if (typeof current_temp === 'number') {
-                            currentTempElement.textContent = `${current_temp}°C`;
-                        } else {
-                            currentTempElement.textContent = '--°C';
-                        }
-
-                        if (typeof feels_like === 'number') {
-                            feelsLikeElement.textContent = `${feels_like}°C`;
-                        } else {
-                            feelsLikeElement.textContent = '--°C';
-                        }
-
-                        if (typeof humidity === 'number') {
-                            humidityElement.textContent = `${humidity}%`;
-                        } else {
-                            humidityElement.textContent = '--%';
-                        }
-
-                        if (typeof wind === 'string' && wind.trim()) {
-                            windElement.textContent = wind;
-                        } else if (typeof wind === 'number') {
-                            windElement.textContent = `${wind} km/h`;
-                        } else {
-                            windElement.textContent = '-- km/h';
-                        }
-
-                        if (ai_summary) {
-                            aiSummaryText.textContent = ai_summary;
-                        } else {
-                            aiSummaryText.textContent = 'AI Agent chưa cung cấp tóm tắt cho yêu cầu này.';
-                        }
-
-                        const alertType = (ai_alert || 'NONE').toUpperCase();
-
-                        if (alertType !== 'NONE') {
-                            showAlertCard(alertType);
-                        } else {
-                            showNoAlertCard();
-                        }
-                    }
-                } catch (error) {
-                    console.error('Error fetching forecast:', error);
-                    aiSummaryText.textContent = 'Không thể tải tóm tắt từ AI Agent.';
-                    showNoAlertCard();
-                }
-            }
-
-            runAnalysisButton.addEventListener('click', () => {
-                const city = cityInput.value.trim();
-                fetchDataAndRender(city);
-            });
-
-            const defaultCity = cityInput.value.trim();
-            if (defaultCity) {
-                fetchDataAndRender(defaultCity);
-            }
-        });
-    </script>
-</body>
+    <script
+      src="https://unpkg.com/leaflet/dist/leaflet.js"
+      integrity="sha256-o9N1j7kS1tVWfEy3aMT2xrHAt1dFUIrTVnEa1MZd2Qw="
+      crossorigin=""
+    ></script>
+    <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  </body>
 </html>
