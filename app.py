@@ -106,7 +106,7 @@ analysis_agent = init_analysis_agent(OPENAI_API_KEY)
 def index() -> str:
     """Render the landing page."""
 
-    return render_template("index.html")
+    return render_template("index.html", weather_api_key=OPENWEATHER_API_KEY)
 
 
 @app.post("/api/forecast")
