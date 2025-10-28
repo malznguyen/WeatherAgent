@@ -17,6 +17,9 @@
         crossorigin=""
         defer
     ></script>
+    <script>
+        window.OPENWEATHER_API_KEY = {{ weather_api_key | default('', true) | tojson | safe }};
+    </script>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen">
     <div class="flex min-h-screen">
@@ -171,24 +174,32 @@
             <section>
                 <h3 class="text-lg font-semibold mb-4">Alerts</h3>
                 <div class="space-y-4">
-                    <div class="p-4 rounded-lg bg-red-500/20 border border-red-500">
-                        <p class="text-sm font-semibold text-red-200">Severe Storm Warning - Category 1</p>
-                        <p class="text-xs text-red-100 mt-2">Expect high winds and heavy rainfall from 2 PM onwards.</p>
+                    <div
+                        id="alert-card"
+                        class="p-4 rounded-lg bg-amber-500/20 border border-amber-500 transition-colors duration-200"
+                    >
+                        <p id="alert-title" class="text-sm font-semibold text-amber-100">
+                            Cold Advisory - Below 15°C
+                        </p>
+                        <p id="alert-description" class="text-xs text-amber-100 mt-2">
+                            Northern highlands will see rapid temperature drops overnight.
+                        </p>
                     </div>
-                    <div class="p-4 rounded-lg bg-amber-500/20 border border-amber-500">
-                        <p class="text-sm font-semibold text-amber-100">Cold Advisory - Below 15°C</p>
-                        <p class="text-xs text-amber-100 mt-2">Northern highlands will see rapid temperature drops overnight.</p>
-                    </div>
-                    <div class="p-4 rounded-lg bg-blue-500/20 border border-blue-500">
-                        <p class="text-sm font-semibold text-blue-100">Coastal Flood Watch</p>
-                        <p class="text-xs text-blue-100 mt-2">Monitor tidal surges along northeastern shores.</p>
+                    <div
+                        id="no-alert-card"
+                        class="hidden p-4 rounded-lg bg-gray-900 border border-gray-700 text-sm text-gray-300"
+                    >
+                        <p>Không có cảnh báo nghiêm trọng tại thời điểm này.</p>
                     </div>
                 </div>
             </section>
             <section>
                 <h3 class="text-lg font-semibold mb-4">AI Insights</h3>
                 <div class="bg-gray-900 border border-gray-700 rounded-xl p-4 text-sm text-gray-300">
-                    <p>AI Agent Summary: The system predicts the cold front will arrive sooner than expected, impacting Northern crops.</p>
+                    <p id="ai-summary-text">
+                        AI Agent Summary: The system predicts the cold front will arrive sooner than expected, impacting Northern
+                        crops.
+                    </p>
                 </div>
             </section>
         </aside>
@@ -196,6 +207,7 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+            const weatherApiKey = window.OPENWEATHER_API_KEY || '';
             const map = L.map('weather-map').setView([21.0285, 105.8542], 11);
 
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -203,34 +215,114 @@
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             }).addTo(map);
 
+            if (weatherApiKey) {
+                L.tileLayer(
+                    `https://tile.openweathermap.org/map/precipitation_new/{z}/{x}/{y}.png?appid=${weatherApiKey}`,
+                    {
+                        opacity: 0.7
+                    }
+                ).addTo(map);
+            }
+
             L.marker([21.0285, 105.8542])
                 .addTo(map)
                 .bindPopup('Hà Nội - Central Forecast Focus')
                 .openPopup();
 
             const runAnalysisButton = document.getElementById('run-analysis');
+            const cityInput = document.getElementById('city-input');
+            const currentTempElement = document.getElementById('current-temp');
+            const aiSummaryText = document.getElementById('ai-summary-text');
+            const alertCard = document.getElementById('alert-card');
+            const alertTitle = document.getElementById('alert-title');
+            const alertDescription = document.getElementById('alert-description');
+            const noAlertCard = document.getElementById('no-alert-card');
 
-            async function fetchWeatherData() {
+            const alertDictionary = {
+                COLD_ADVISORY: {
+                    title: 'Cảnh báo Rét Đậm',
+                    description: 'Nhiệt độ được dự báo giảm sâu. Chuẩn bị áo ấm và bảo vệ cây trồng.'
+                },
+                WIND_ALERT: {
+                    title: 'Cảnh báo Gió Mạnh',
+                    description: 'Gió giật mạnh có thể ảnh hưởng đến mái nhà và cây cối. Hạn chế di chuyển ngoài trời.'
+                },
+                STORM_WARNING: {
+                    title: 'Cảnh báo Bão',
+                    description: 'Mưa to và giông mạnh có khả năng xuất hiện. Theo dõi cập nhật mới và chuẩn bị sơ tán nếu cần.'
+                }
+            };
+
+            function showAlertCard(alertKey) {
+                const alertContent = alertDictionary[alertKey] || {
+                    title: 'Cảnh báo Thời tiết',
+                    description: 'Điều kiện thời tiết khắc nghiệt được dự báo. Theo dõi thêm thông tin chi tiết.'
+                };
+
+                alertCard.classList.remove('hidden');
+                noAlertCard.classList.add('hidden');
+                alertTitle.textContent = alertContent.title;
+                alertDescription.textContent = alertContent.description;
+            }
+
+            function showNoAlertCard() {
+                alertCard.classList.add('hidden');
+                noAlertCard.classList.remove('hidden');
+            }
+
+            async function fetchDataAndRender(city) {
+                if (!city) {
+                    return;
+                }
+
                 try {
-                    const response = await fetch('/api/forecast');
+                    const response = await fetch('/api/forecast', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ city })
+                    });
+
                     if (!response.ok) {
-                        throw new Error('Network response was not ok');
+                        throw new Error(`Network response was not ok: ${response.status}`);
                     }
+
                     const data = await response.json();
+
                     if (data && data.currentTemperature) {
-                        document.getElementById('current-temp').textContent = `${data.currentTemperature}°C`;
+                        currentTempElement.textContent = `${data.currentTemperature}°C`;
+                    }
+
+                    if (data && data.ai_summary) {
+                        aiSummaryText.textContent = data.ai_summary;
                     } else {
-                        document.getElementById('current-temp').textContent = '25°C';
+                        aiSummaryText.textContent = 'AI Agent chưa cung cấp tóm tắt cho yêu cầu này.';
+                    }
+
+                    const alertType = (data && data.ai_alert ? data.ai_alert : 'NONE').toUpperCase();
+
+                    if (alertType !== 'NONE') {
+                        showAlertCard(alertType);
+                    } else {
+                        showNoAlertCard();
                     }
                 } catch (error) {
                     console.error('Error fetching forecast:', error);
-                    document.getElementById('current-temp').textContent = '25°C';
+                    aiSummaryText.textContent = 'Không thể tải tóm tắt từ AI Agent.';
+                    showNoAlertCard();
                 }
             }
 
             runAnalysisButton.addEventListener('click', () => {
-                fetchWeatherData();
+                const city = cityInput.value.trim();
+                fetchDataAndRender(city);
             });
+
+            const defaultCity = cityInput.value.trim();
+            if (defaultCity) {
+                fetchDataAndRender(defaultCity);
+            }
         });
     </script>
 </body>
