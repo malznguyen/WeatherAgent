@@ -10,15 +10,27 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 try:  # pragma: no cover - import safety for environments without OpenAI
+    import openai  # type: ignore
+except Exception as exc:  # pragma: no cover - gracefully handle missing dependency
+    openai = None  # type: ignore
+    OPENAI_VERSION = "not-installed"
+    _SDK_IMPORT_ERROR: Optional[Exception] = exc
+else:  # pragma: no cover - runtime only
+    OPENAI_VERSION = getattr(openai, "__version__", "unknown")
+    _SDK_IMPORT_ERROR = None
+
+try:  # pragma: no cover - isolate optional dependency usage
     from openai import (
         APIConnectionError,
         APIError,
         APITimeoutError,
         OpenAI,
     )
-except Exception:  # pragma: no cover - gracefully handle missing dependency
+except Exception as exc:  # pragma: no cover - gracefully handle missing dependency
     APIConnectionError = APIError = APITimeoutError = None  # type: ignore
     OpenAI = None  # type: ignore
+    if _SDK_IMPORT_ERROR is None:
+        _SDK_IMPORT_ERROR = exc
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,6 +63,18 @@ class AiDisabled(RuntimeError):
 
 class AiServiceError(RuntimeError):
     """Raised when a call to the AI service fails."""
+
+
+class AiSdkIncompatible(AiServiceError):
+    """Raised when the installed OpenAI SDK is incompatible."""
+
+
+class AiTimeout(AiServiceError):
+    """Raised when the OpenAI request times out."""
+
+
+class AiParseError(AiServiceError):
+    """Raised when OpenAI returns malformed JSON payloads."""
 
 
 @dataclass
@@ -103,7 +127,9 @@ def _get_client() -> OpenAI:
     global _CLIENT, _CLIENT_KEY_FINGERPRINT
 
     if OpenAI is None:  # pragma: no cover - dependency missing in runtime
-        raise AiDisabled("OpenAI SDK is not available")
+        if openai is None:
+            raise AiDisabled("OpenAI SDK is not installed")
+        raise AiSdkIncompatible("OpenAI SDK is incompatible with this application")
 
     if _CLIENT is not None:
         return _CLIENT
@@ -145,6 +171,8 @@ def _call_openai(*, model: str, system: str, user: str, response_format: Optiona
         except APITimeoutError as exc:  # pragma: no cover - network path
             last_error = exc
             _LOGGER.warning("OpenAI request timeout (attempt %s/%s)", attempt + 1, 2)
+            if attempt == 1:
+                raise AiTimeout("OpenAI request timed out") from exc
         except APIConnectionError as exc:  # pragma: no cover - network path
             last_error = exc
             _LOGGER.warning("OpenAI connection error (attempt %s/%s): %s", attempt + 1, 2, exc)
@@ -165,6 +193,16 @@ def _call_openai(*, model: str, system: str, user: str, response_format: Optiona
             raise AiServiceError(f"OpenAI request failed: {last_error}") from last_error
 
     raise AiServiceError("OpenAI request failed: unknown error")
+
+
+def sdk_status() -> Dict[str, Any]:
+    """Return diagnostic information about the OpenAI SDK import state."""
+
+    return {
+        "version": OPENAI_VERSION,
+        "error": str(_SDK_IMPORT_ERROR) if _SDK_IMPORT_ERROR else None,
+        "compatible": OpenAI is not None,
+    }
 
 
 def summarize(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -199,14 +237,14 @@ def alerts(data: Dict[str, Any]) -> Dict[str, Any]:
     try:
         parsed = json.loads(result.content)
     except json.JSONDecodeError as exc:
-        raise AiServiceError("OpenAI trả về nội dung không phải JSON hợp lệ") from exc
+        raise AiParseError("OpenAI trả về nội dung không phải JSON hợp lệ") from exc
 
     if isinstance(parsed, dict) and isinstance(parsed.get("analysis"), dict):
         analysis = parsed["analysis"]
     elif isinstance(parsed, dict):
         analysis = parsed
     else:
-        raise AiServiceError("Phản hồi AI không đúng định dạng JSON mong đợi")
+        raise AiParseError("Phản hồi AI không đúng định dạng JSON mong đợi")
 
     _validate_alerts_payload(analysis)
 
