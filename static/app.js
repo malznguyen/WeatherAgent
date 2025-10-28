@@ -9,6 +9,13 @@ const locationBtn = document.getElementById("location-btn");
 const locationLabel = document.getElementById("location-label");
 const toastEl = document.getElementById("toast");
 
+const aiDrawer = document.getElementById("ai-drawer");
+const aiContent = document.getElementById("ai-content");
+const aiInput = document.getElementById("ai-input");
+const btnInsights = document.getElementById("btn-insights");
+const btnAlerts = document.getElementById("btn-alerts");
+const btnAsk = document.getElementById("btn-ask");
+
 const currentTempEl = document.getElementById("current-temp");
 const currentDescEl = document.getElementById("current-description");
 const currentFeelsEl = document.getElementById("current-feels");
@@ -21,6 +28,8 @@ const dailyTableBody = document.querySelector("#daily-forecast tbody");
 
 let map;
 let marker;
+let lastLatLon = null;
+let aiLoading = false;
 
 function initMap() {
   map = L.map("map").setView([DEFAULT_COORDS.lat, DEFAULT_COORDS.lon], 11);
@@ -62,6 +71,229 @@ function handleError(error, fallbackMessage = "Something went wrong") {
   console.error(error);
   const message = typeof error === "string" ? error : error?.message || fallbackMessage;
   showToast(message);
+}
+
+function setAiLoading(isLoading) {
+  aiLoading = isLoading;
+  if (!aiDrawer) return;
+  aiDrawer.classList.toggle("loading", isLoading);
+  [btnInsights, btnAlerts, btnAsk].forEach((btn) => {
+    if (btn) btn.disabled = isLoading;
+  });
+  if (aiInput) {
+    aiInput.disabled = isLoading;
+  }
+}
+
+function appendAiMessage({ title, body, meta, variant = "info" }) {
+  if (!aiContent) return null;
+  const block = document.createElement("div");
+  block.className = "ai-message";
+  if (variant === "error") {
+    block.classList.add("error");
+  }
+
+  if (title) {
+    const heading = document.createElement("h4");
+    heading.textContent = title;
+    block.appendChild(heading);
+  }
+
+  if (typeof body === "string") {
+    const bodyEl = document.createElement("div");
+    bodyEl.textContent = body;
+    block.appendChild(bodyEl);
+  } else if (body instanceof HTMLElement) {
+    block.appendChild(body);
+  }
+
+  const metaEl = renderAiMeta(meta);
+  if (metaEl) {
+    block.appendChild(metaEl);
+  }
+
+  aiContent.appendChild(block);
+  scrollAiContent();
+  return block;
+}
+
+function renderAiMeta(meta) {
+  if (!meta) return null;
+  const parts = [];
+  if (meta.model) {
+    parts.push(meta.model);
+  }
+  if (typeof meta.took_ms === "number") {
+    parts.push(`${meta.took_ms} ms`);
+  }
+  if (meta.trace_id) {
+    parts.push(`trace ${meta.trace_id}`);
+  }
+
+  if (!parts.length) {
+    return null;
+  }
+
+  const el = document.createElement("div");
+  el.className = "ai-meta";
+  el.textContent = parts.join(" • ");
+  return el;
+}
+
+function scrollAiContent() {
+  if (!aiContent) return;
+  requestAnimationFrame(() => {
+    aiContent.scrollTop = aiContent.scrollHeight;
+  });
+}
+
+function pickAiMeta(data) {
+  if (!data || typeof data !== "object") return null;
+  return {
+    model: data.model || data.ai_model || null,
+    trace_id: data.trace_id || data.traceId || null,
+    took_ms: typeof data.took_ms === "number" ? data.took_ms : data.tookMs,
+  };
+}
+
+async function callJSON(url, options = {}) {
+  const headers = { Accept: "application/json", ...(options.headers || {}) };
+  const config = { method: options.method || "GET", headers };
+
+  if (options.body !== undefined) {
+    if (options.body instanceof FormData || typeof options.body === "string") {
+      config.body = options.body;
+    } else {
+      config.body = JSON.stringify(options.body);
+      config.headers["Content-Type"] = "application/json";
+    }
+  }
+
+  try {
+    const response = await fetch(url, config);
+    const data = await safeJson(response);
+    if (!response.ok) {
+      const errorMessage = data?.message || data?.error || response.statusText || "AI request failed";
+      const error = new Error(errorMessage);
+      error.details = data;
+      error.status = response.status;
+      throw error;
+    }
+    return data;
+  } catch (error) {
+    throw error;
+  }
+}
+
+function requireLatLon() {
+  if (!lastLatLon) {
+    showToast("Chọn vị trí trước đã");
+    return null;
+  }
+  return { ...lastLatLon };
+}
+
+function renderAiInsights(result) {
+  if (!result) return;
+  appendAiMessage({
+    title: "Insights",
+    body: result.summary || "Không có dữ liệu tóm tắt",
+    meta: pickAiMeta(result),
+  });
+}
+
+function renderAiAlerts(result) {
+  const analysis = result?.analysis;
+  if (!analysis) {
+    appendAiMessage({
+      title: "Alerts",
+      body: "Không có dữ liệu cảnh báo",
+      meta: pickAiMeta(result),
+      variant: "error",
+    });
+    return;
+  }
+
+  const wrapper = document.createElement("div");
+
+  const headlineEl = document.createElement("div");
+  headlineEl.className = "ai-alert-headline";
+  headlineEl.textContent = analysis.headline || "Cảnh báo thời tiết";
+  wrapper.appendChild(headlineEl);
+
+  const severityEl = document.createElement("div");
+  severityEl.className = "ai-alert-severity";
+  severityEl.textContent = `Mức độ: ${analysis.severity || "—"}`;
+  wrapper.appendChild(severityEl);
+
+  if (Array.isArray(analysis.risks) && analysis.risks.length) {
+    const risksHeading = document.createElement("h4");
+    risksHeading.textContent = "Rủi ro";
+    wrapper.appendChild(risksHeading);
+
+    const riskList = document.createElement("ul");
+    riskList.className = "ai-alert-advice";
+    analysis.risks.forEach((risk) => {
+      const li = document.createElement("li");
+      const type = String(risk.type || "").toUpperCase();
+      const level = risk.level != null ? ` cấp ${risk.level}` : "";
+      li.textContent = `${type}${level}: ${risk.why || ""}`.trim();
+      riskList.appendChild(li);
+    });
+    wrapper.appendChild(riskList);
+  }
+
+  if (Array.isArray(analysis.advice) && analysis.advice.length) {
+    const adviceHeading = document.createElement("h4");
+    adviceHeading.textContent = "Khuyến nghị";
+    wrapper.appendChild(adviceHeading);
+
+    const adviceList = document.createElement("ul");
+    adviceList.className = "ai-alert-advice";
+    analysis.advice.forEach((tip) => {
+      const li = document.createElement("li");
+      li.textContent = tip;
+      adviceList.appendChild(li);
+    });
+    wrapper.appendChild(adviceList);
+  }
+
+  appendAiMessage({
+    title: "Alerts",
+    body: wrapper,
+    meta: pickAiMeta(result),
+  });
+}
+
+function renderAiChat(question, result) {
+  const questionText = question ? `Câu hỏi: ${question}` : "";
+  const answer = result?.answer || "Không có câu trả lời";
+  const body = questionText ? `${questionText}\n\n${answer}` : answer;
+  appendAiMessage({
+    title: "Chat",
+    body,
+    meta: pickAiMeta(result),
+  });
+}
+
+function handleAiError(error) {
+  console.error(error);
+  const details = error?.details;
+  let message = error?.message || "Không thể xử lý yêu cầu AI";
+
+  if (details?.error === "OPENAI_DISABLED") {
+    message = "AI đang tắt (OPENAI_DISABLED)";
+  } else if (details?.message) {
+    message = details.message;
+  }
+
+  showToast(message);
+  appendAiMessage({
+    title: "AI Error",
+    body: message,
+    meta: pickAiMeta(details),
+    variant: "error",
+  });
 }
 
 async function fetchJson(url, description) {
@@ -127,6 +359,11 @@ async function fetchWeather(lat, lon, options = {}) {
     renderCurrent(data.current);
     renderHourly(data.hourly || []);
     renderDaily(data.daily || []);
+    if (typeof data.location?.lat === "number" && typeof data.location?.lon === "number") {
+      lastLatLon = { lat: data.location.lat, lon: data.location.lon };
+    } else {
+      lastLatLon = { lat, lon };
+    }
   } catch (error) {
     handleError(error, "Unable to fetch weather data");
   }
@@ -342,6 +579,89 @@ function bindEvents() {
         }
       );
     });
+  }
+
+  if (btnInsights) {
+    btnInsights.addEventListener("click", () => doInsights());
+  }
+
+  if (btnAlerts) {
+    btnAlerts.addEventListener("click", () => doAlerts());
+  }
+
+  if (btnAsk) {
+    btnAsk.addEventListener("click", () => doAsk());
+  }
+
+  if (aiInput) {
+    aiInput.addEventListener("keyup", (event) => {
+      if (event.key === "Enter") {
+        doAsk();
+      }
+    });
+  }
+}
+
+async function doInsights() {
+  if (aiLoading) return;
+  const coords = requireLatLon();
+  if (!coords) return;
+
+  setAiLoading(true);
+  try {
+    const params = new URLSearchParams({ lat: coords.lat.toString(), lon: coords.lon.toString() });
+    const data = await callJSON(`${API_BASE}/ai/insights?${params.toString()}`);
+    renderAiInsights(data);
+  } catch (error) {
+    handleAiError(error);
+  } finally {
+    setAiLoading(false);
+  }
+}
+
+async function doAlerts() {
+  if (aiLoading) return;
+  const coords = requireLatLon();
+  if (!coords) return;
+
+  setAiLoading(true);
+  try {
+    const params = new URLSearchParams({ lat: coords.lat.toString(), lon: coords.lon.toString() });
+    const data = await callJSON(`${API_BASE}/ai/alerts?${params.toString()}`);
+    renderAiAlerts(data);
+  } catch (error) {
+    handleAiError(error);
+  } finally {
+    setAiLoading(false);
+  }
+}
+
+async function doAsk() {
+  if (aiLoading) return;
+  const coords = requireLatLon();
+  if (!coords) return;
+
+  const question = (aiInput?.value || "").trim();
+  if (!question) {
+    showToast("Hãy nhập câu hỏi cho AI");
+    if (aiInput) aiInput.focus();
+    return;
+  }
+
+  setAiLoading(true);
+  try {
+    const data = await callJSON(`${API_BASE}/ai/ask`, {
+      method: "POST",
+      body: { question, lat: coords.lat, lon: coords.lon },
+    });
+    renderAiChat(question, data);
+    if (aiInput) {
+      aiInput.value = "";
+    }
+  } catch (error) {
+    handleAiError(error);
+  } finally {
+    setAiLoading(false);
   }
 }
 

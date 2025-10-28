@@ -3,3 +3,4 @@ flask-cors
 requests
 urllib3
 python-dotenv
+openai>=1.30.0
