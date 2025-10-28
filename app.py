@@ -26,6 +26,7 @@ logger = logging.getLogger("weather-agent")
 
 OPENWEATHER_API_KEY = (os.getenv("OPENWEATHER_API_KEY") or "").strip()
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
+OPENAI_BASE_URL = (os.getenv("OPENAI_BASE_URL") or "https://api.deepseek.com").strip()
 
 
 def mask_key(value: str) -> str:
@@ -59,6 +60,7 @@ else:  # pragma: no cover - runtime only
 
 logger.info("OpenWeather API key: %s", mask_key(OPENWEATHER_API_KEY))
 logger.info("OpenAI API key: %s", mask_key(OPENAI_API_KEY))
+logger.info("OpenAI base URL: %s", OPENAI_BASE_URL or "(default)")
 logger.info("OpenAI SDK version: %s", OPENAI_SDK_VERSION)
 
 if OPENAI_API_KEY and "\n" in OPENAI_API_KEY:
@@ -424,7 +426,8 @@ def _execute_ai_pipeline(
 
 
 def _perform_openai_selftest() -> Dict[str, Any]:
-    model_name = "gpt-4o-mini"
+    # Use the configured chat model from AI module (defaults to DeepSeek)
+    model_name = getattr(AI, "CHAT_MODEL", "deepseek-chat")
     sdk_info = AI.sdk_status()
     result: Dict[str, Any] = {
         "openai_ok": False,
@@ -452,30 +455,26 @@ def _perform_openai_selftest() -> Dict[str, Any]:
         return result
 
     try:
-        client = _SelfTestClient(api_key=api_key)
+        # Use base URL to support DeepSeek
+        if OPENAI_BASE_URL:
+            client = _SelfTestClient(api_key=api_key, base_url=OPENAI_BASE_URL)
+        else:
+            client = _SelfTestClient(api_key=api_key)
     except Exception as exc:  # pragma: no cover - runtime
         result["error"] = f"Failed to initialize OpenAI client: {exc}"[:200]
         return result
 
-    models_api = getattr(client, "models", None)
-    if models_api is None:
-        result["error"] = "OpenAI SDK is incompatible (missing models client)"
+    completions = getattr(client, "chat", None)
+    if completions is None or not hasattr(completions, "completions"):
+        result["error"] = "OpenAI SDK is incompatible (chat completions missing)"
         return result
 
     try:
-        if hasattr(models_api, "retrieve"):
-            model_info = models_api.retrieve(model_name, timeout=8)  # type: ignore[attr-defined]
-            result["model"] = getattr(model_info, "id", model_name)
-        elif hasattr(models_api, "list"):
-            listing = models_api.list(timeout=8)  # type: ignore[attr-defined]
-            models = getattr(listing, "data", []) or []
-            found = any(getattr(item, "id", None) == model_name for item in models)
-            if not found:
-                result["error"] = f"Model {model_name} not available"
-                return result
-        else:
-            result["error"] = "OpenAI SDK is incompatible (models interface unsupported)"
-            return result
+        _ = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": "ping"}],
+            timeout=8,
+        )
     except Exception as exc:  # pragma: no cover - network path
         result["error"] = str(exc)[:200]
         return result

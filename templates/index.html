@@ -17,17 +17,17 @@
       <header class="app-header">
         <div class="branding">
           <h1>Weather Forecast Agent</h1>
-          <p class="subtitle">Plan your day with up-to-date forecasts</p>
+          <p class="subtitle">Plan your day with confident, real-time forecasts</p>
         </div>
         <div class="search-bar">
           <input
             id="search-input"
             type="search"
-            placeholder="Search city or address…"
+            placeholder="Search city or address..."
             autocomplete="off"
           />
-          <button id="search-btn" class="primary">Search</button>
-          <button id="location-btn" class="secondary">Use my location</button>
+          <button id="search-btn" class="primary" type="button">Search</button>
+          <button id="location-btn" class="secondary" type="button">Use my location</button>
         </div>
       </header>
 
@@ -48,9 +48,7 @@
                   <img id="current-icon" alt="" class="weather-icon" />
                   <div>
                     <div id="current-temp" class="temperature">—</div>
-                    <div id="current-description" class="description">
-                      Select a location to begin
-                    </div>
+                    <div id="current-description" class="description">Select a location to begin</div>
                   </div>
                 </div>
                 <div class="current-details">
@@ -98,9 +96,38 @@
           <section class="card ai-card" id="ai-insights-card" aria-labelledby="ai-insights-title">
             <div class="card-header">
               <h2 id="ai-insights-title">AI Insights</h2>
-              <button id="refresh-insights" class="icon-button" type="button" aria-label="Refresh insights">
-                ↻
-              </button>
+              <div class="card-header-actions">
+                <button
+                  id="open-insights-dock"
+                  class="icon-button"
+                  type="button"
+                  aria-label="Open insights in AI dock"
+                  data-ai-open="insights"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="1.5"
+                      d="M5 13v6a1 1 0 0 0 1 1h6M13 5h6v6M11 13l8-8"
+                    />
+                  </svg>
+                </button>
+                <button id="refresh-insights" class="icon-button" type="button" aria-label="Refresh insights">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="1.5"
+                      d="M4.5 4.5v3.75a.75.75 0 0 0 .75.75H9a.75.75 0 0 0 0-1.5H6.984a6.75 6.75 0 0 1 11.234-2.106.75.75 0 1 0 1.08-1.04A8.25 8.25 0 0 0 3.75 11.25a.75.75 0 0 0 1.5 0 6.75 6.75 0 0 1 1.5-4.5zm15 15v-3.75a.75.75 0 0 0-.75-.75H15a.75.75 0 0 0 0 1.5h2.016a6.75 6.75 0 0 1-11.234 2.106.75.75 0 0 0-1.08 1.04A8.25 8.25 0 0 0 20.25 12.75a.75.75 0 0 0-1.5 0 6.75 6.75 0 0 1-1.5 4.5z"
+                    />
+                  </svg>
+                </button>
+              </div>
             </div>
             <div id="ai-insights-body" class="card-body scrollable ai-card-body">
               <p class="placeholder">Select a location to load AI insights.</p>
@@ -110,9 +137,38 @@
           <section class="card ai-card" id="ai-alerts-card" aria-labelledby="ai-alerts-title">
             <div class="card-header">
               <h2 id="ai-alerts-title">AI Alerts</h2>
-              <button id="refresh-alerts" class="icon-button" type="button" aria-label="Refresh alerts">
-                ↻
-              </button>
+              <div class="card-header-actions">
+                <button
+                  id="open-alerts-dock"
+                  class="icon-button"
+                  type="button"
+                  aria-label="Open alerts in AI dock"
+                  data-ai-open="alerts"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="1.5"
+                      d="M5 13v6a1 1 0 0 0 1 1h6M13 5h6v6M11 13l8-8"
+                    />
+                  </svg>
+                </button>
+                <button id="refresh-alerts" class="icon-button" type="button" aria-label="Refresh alerts">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="1.5"
+                      d="M4.5 4.5v3.75a.75.75 0 0 0 .75.75H9a.75.75 0 0 0 0-1.5H6.984a6.75 6.75 0 0 1 11.234-2.106.75.75 0 1 0 1.08-1.04A8.25 8.25 0 0 0 3.75 11.25a.75.75 0 0 0 1.5 0 6.75 6.75 0 0 1 1.5-4.5zm15 15v-3.75a.75.75 0 0 0-.75-.75H15a.75.75 0 0 0 0 1.5h2.016a6.75 6.75 0 0 1-11.234 2.106.75.75 0 0 0-1.08 1.04A8.25 8.25 0 0 0 20.25 12.75a.75.75 0 0 0-1.5 0 6.75 6.75 0 0 1-1.5 4.5z"
+                    />
+                  </svg>
+                </button>
+              </div>
             </div>
             <div id="ai-alerts-body" class="card-body scrollable ai-card-body">
               <p class="placeholder">Select a location to load AI alerts.</p>
@@ -128,30 +184,116 @@
       id="ai-toggle"
       class="ai-float-btn"
       type="button"
-      aria-label="Mở AI Weather Agent"
+      aria-label="AI Weather Assistant"
     >
-      🤖
+      AI
     </button>
 
-    <aside id="ai-dock" class="ai-dock" aria-hidden="true">
+    <div id="ai-backdrop" class="ai-backdrop" aria-hidden="true"></div>
+
+    <aside
+      id="ai-dock"
+      class="ai-dock"
+      aria-hidden="true"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="ai-dock-title"
+    >
       <div id="ai-dock-handle" class="ai-dock-header" role="presentation">
-        <span class="ai-dock-title">AI Weather Chat</span>
-        <button id="ai-close" class="ai-close" type="button" aria-label="Đóng">×</button>
+        <div class="ai-dock-heading">
+          <span id="ai-dock-title" class="ai-dock-title">AI Weather Assistant</span>
+          <span class="ai-dock-subtitle">Insights, alerts, and chat</span>
+        </div>
+        <button id="ai-close" class="ai-close" type="button" aria-label="Close AI panel">&times;</button>
       </div>
-      <div id="ai-content" class="ai-dock-content" role="region" aria-live="polite">
-        <div class="ai-hint">Chọn vị trí trên bản đồ hoặc tìm kiếm trước khi dùng AI.</div>
+      <div class="ai-dock-tabs" role="tablist">
+        <button
+          type="button"
+          class="ai-tab"
+          data-ai-tab="insights"
+          id="ai-tab-insights"
+          role="tab"
+          aria-controls="ai-panel-insights"
+          aria-selected="false"
+          tabindex="-1"
+        >
+          Insights
+        </button>
+        <button
+          type="button"
+          class="ai-tab"
+          data-ai-tab="alerts"
+          id="ai-tab-alerts"
+          role="tab"
+          aria-controls="ai-panel-alerts"
+          aria-selected="false"
+          tabindex="-1"
+        >
+          Alerts
+        </button>
+        <button
+          type="button"
+          class="ai-tab active"
+          data-ai-tab="chat"
+          id="ai-tab-chat"
+          role="tab"
+          aria-controls="ai-panel-chat"
+          aria-selected="true"
+          tabindex="0"
+        >
+          Chat
+        </button>
       </div>
-      <form id="ai-chat-form" class="ai-dock-chat" novalidate>
-        <input
-          id="ai-input"
-          name="question"
-          type="text"
-          autocomplete="off"
-          placeholder="Hỏi AI về thời tiết hoặc kế hoạch..."
-          aria-label="Câu hỏi cho AI"
-        />
-        <button id="btn-ask" type="submit">Gửi</button>
-      </form>
+      <div class="ai-dock-panels">
+        <section
+          id="ai-panel-insights"
+          class="ai-dock-panel"
+          role="tabpanel"
+          aria-labelledby="ai-tab-insights"
+          aria-hidden="true"
+          data-ai-panel="insights"
+        >
+          <div id="ai-dock-insights" class="ai-dock-panel-content">
+            <p class="placeholder">Select a location to load AI insights.</p>
+          </div>
+        </section>
+        <section
+          id="ai-panel-alerts"
+          class="ai-dock-panel"
+          role="tabpanel"
+          aria-labelledby="ai-tab-alerts"
+          aria-hidden="true"
+          data-ai-panel="alerts"
+        >
+          <div id="ai-dock-alerts" class="ai-dock-panel-content">
+            <p class="placeholder">Select a location to load AI alerts.</p>
+          </div>
+        </section>
+        <section
+          id="ai-panel-chat"
+          class="ai-dock-panel active"
+          role="tabpanel"
+          aria-labelledby="ai-tab-chat"
+          aria-hidden="false"
+          data-ai-panel="chat"
+        >
+          <div id="ai-content" class="ai-dock-content" role="region" aria-live="polite">
+            <div class="ai-hint">Choose a location on the map or search before chatting with the AI.</div>
+          </div>
+          <form id="ai-chat-form" class="ai-dock-chat" novalidate>
+            <input
+              id="ai-input"
+              name="question"
+              type="text"
+              autocomplete="off"
+              placeholder="Ask about the weather or planning..."
+              aria-label="Question for the AI assistant"
+            />
+            <button id="btn-ask" type="submit">Send</button>
+          </form>
+        </section>
+      </div>
+      <div id="ai-resizer" class="ai-dock-resizer" aria-hidden="true"></div>
     </aside>
 
     <script

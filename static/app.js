@@ -19,12 +19,22 @@ const refreshAlertsBtn = document.getElementById("refresh-alerts");
 
 const aiDock = document.getElementById("ai-dock");
 const aiDockHandle = document.getElementById("ai-dock-handle");
+const aiResizer = document.getElementById("ai-resizer");
+const aiBackdrop = document.getElementById("ai-backdrop");
 const aiToggle = document.getElementById("ai-toggle");
 const aiClose = document.getElementById("ai-close");
+const aiDockTabs = document.querySelectorAll("[data-ai-tab]");
+const aiDockPanels = document.querySelectorAll(".ai-dock-panel");
+const aiDockInsights = document.getElementById("ai-dock-insights");
+const aiDockAlerts = document.getElementById("ai-dock-alerts");
 const aiContent = document.getElementById("ai-content");
 const aiInput = document.getElementById("ai-input");
 const aiChatForm = document.getElementById("ai-chat-form");
 const btnAsk = document.getElementById("btn-ask");
+const openInsightsDockBtn = document.getElementById("open-insights-dock");
+const openAlertsDockBtn = document.getElementById("open-alerts-dock");
+
+const DOCK_TABS = new Set(["insights", "alerts", "chat"]);
 
 const currentTempEl = document.getElementById("current-temp");
 const currentDescEl = document.getElementById("current-description");
@@ -42,14 +52,18 @@ const state = {
   lastLatLon: null,
   loading: false,
   ai: {
-    insights: { loading: false, lastLoaded: 0, visible: false, dirty: true },
-    alerts: { loading: false, lastLoaded: 0, visible: false, dirty: true },
+    insights: { loading: false, lastLoaded: 0, visible: false, dirty: true, data: null },
+    alerts: { loading: false, lastLoaded: 0, visible: false, dirty: true, data: null },
   },
   dock: {
     open: false,
     dragging: false,
+    resizing: false,
     offset: { x: 0, y: 0 },
     position: null,
+    size: null,
+    resizeStart: null,
+    activeTab: "chat",
   },
   aiLoading: false,
 };
@@ -57,6 +71,8 @@ const state = {
 function init() {
   initMap();
   bindEvents();
+  setDockTab(state.dock.activeTab);
+  handleDockResize();
   setupObservers();
   setLastLatLon(DEFAULT_COORDS.lat, DEFAULT_COORDS.lon);
   fetchWeather(DEFAULT_COORDS.lat, DEFAULT_COORDS.lon, { label: "Hanoi, VN" });
@@ -138,7 +154,20 @@ function bindEvents() {
   }
 
   if (aiClose) {
-    aiClose.addEventListener("click", () => closeAiDock());
+    aiClose.addEventListener("pointerdown", (event) => event.stopPropagation());
+    aiClose.addEventListener("click", () => closeAiDock({ focusToggle: true }));
+  }
+
+  if (aiBackdrop) {
+    aiBackdrop.addEventListener("click", () => closeAiDock({ focusToggle: true }));
+  }
+
+  if (openInsightsDockBtn) {
+    openInsightsDockBtn.addEventListener("click", () => openAiDock({ tab: "insights" }));
+  }
+
+  if (openAlertsDockBtn) {
+    openAlertsDockBtn.addEventListener("click", () => openAiDock({ tab: "alerts" }));
   }
 
   if (aiChatForm) {
@@ -148,18 +177,32 @@ function bindEvents() {
     });
   }
 
+  aiDockTabs.forEach((tabButton) => {
+    tabButton.addEventListener("click", () => {
+      const tabName = tabButton.dataset.aiTab;
+      setDockTab(tabName);
+    });
+  });
+
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && state.dock.open) {
-      closeAiDock();
-      aiToggle?.focus();
+      closeAiDock({ focusToggle: true });
     }
   });
 
   if (aiDockHandle) {
     aiDockHandle.addEventListener("pointerdown", startDockDrag);
   }
+  if (aiResizer) {
+    aiResizer.addEventListener("pointerdown", startDockResize);
+  }
   document.addEventListener("pointermove", onDockDrag);
   document.addEventListener("pointerup", endDockDrag);
+  document.addEventListener("pointercancel", endDockDrag);
+  document.addEventListener("pointermove", onDockResize);
+  document.addEventListener("pointerup", endDockResize);
+  document.addEventListener("pointercancel", endDockResize);
+  window.addEventListener("resize", handleDockResize);
 }
 
 function setupObservers() {
@@ -200,7 +243,18 @@ function setupObservers() {
 }
 
 function startDockDrag(event) {
-  if (!aiDock) return;
+  if (!aiDock || !isDockDraggable()) return;
+  if (state.dock.resizing) return;
+  if (typeof event.button === "number" && event.button !== 0) return;
+  if (event.target instanceof HTMLElement) {
+    if (event.target.closest(".ai-dock-resizer")) {
+      return;
+    }
+    if (event.target.closest("button")) {
+      return;
+    }
+  }
+
   state.dock.dragging = true;
   const rect = aiDock.getBoundingClientRect();
   state.dock.offset = {
@@ -211,15 +265,19 @@ function startDockDrag(event) {
   aiDock.style.right = "auto";
   aiDock.style.bottom = "auto";
   state.dock.position = { x: rect.left, y: rect.top };
+  if (typeof event.preventDefault === "function") {
+    event.preventDefault();
+  }
   try {
-    aiDockHandle.setPointerCapture(event.pointerId);
+    aiDockHandle?.setPointerCapture(event.pointerId);
   } catch (err) {
     // Ignore capture errors (e.g. unsupported browsers)
   }
 }
 
 function onDockDrag(event) {
-  if (!state.dock.dragging || !aiDock) return;
+  if (state.dock.resizing) return;
+  if (!state.dock.dragging || !aiDock || !isDockDraggable()) return;
   const width = aiDock.offsetWidth;
   const height = aiDock.offsetHeight;
   let x = event.clientX - state.dock.offset.x;
@@ -236,48 +294,197 @@ function endDockDrag(event) {
   state.dock.dragging = false;
   aiDock.classList.remove("dragging");
   try {
-    aiDockHandle.releasePointerCapture(event.pointerId);
+    aiDockHandle?.releasePointerCapture(event.pointerId);
   } catch (err) {
     // Ignore
   }
 }
 
-function toggleAiDock() {
-  if (state.dock.open) {
-    closeAiDock();
-  } else {
-    openAiDock();
+function startDockResize(event) {
+  if (!aiDock || !isDockDraggable()) return;
+  if (state.dock.dragging) return;
+  if (typeof event.button === "number" && event.button !== 0) return;
+
+  const rect = aiDock.getBoundingClientRect();
+  state.dock.resizing = true;
+  state.dock.resizeStart = {
+    pointerId: event.pointerId,
+    width: rect.width,
+    height: rect.height,
+    x: event.clientX,
+    y: event.clientY,
+  };
+  aiDock.classList.add("resizing");
+  event.preventDefault?.();
+  try {
+    aiResizer?.setPointerCapture(event.pointerId);
+  } catch (err) {
+    // Ignore capture errors
   }
 }
 
-function openAiDock() {
+function onDockResize(event) {
+  if (!state.dock.resizing || !aiDock || !isDockDraggable()) return;
+  const start = state.dock.resizeStart;
+  if (!start) return;
+
+  const deltaX = event.clientX - start.x;
+  const deltaY = event.clientY - start.y;
+
+  const minWidth = 360;
+  const minHeight = 280;
+  const maxWidth = Math.min(window.innerWidth - 24, 720);
+  const maxHeight = Math.min(window.innerHeight - 24, 720);
+
+  let width = start.width + deltaX;
+  let height = start.height + deltaY;
+
+  width = Math.max(minWidth, Math.min(width, maxWidth));
+  height = Math.max(minHeight, Math.min(height, maxHeight));
+
+  aiDock.style.width = `${width}px`;
+  aiDock.style.height = `${height}px`;
+  state.dock.size = { width, height };
+}
+
+function endDockResize(event) {
+  if (!state.dock.resizing || !aiDock) return;
+  state.dock.resizing = false;
+  state.dock.resizeStart = null;
+  aiDock.classList.remove("resizing");
+  try {
+    aiResizer?.releasePointerCapture(event.pointerId);
+  } catch (err) {
+    // Ignore
+  }
+}
+
+function isDockDraggable() {
+  return window.matchMedia("(min-width: 768px)").matches;
+}
+
+function resetDockPosition() {
   if (!aiDock) return;
-  state.dock.open = true;
-  aiDock.classList.add("open");
-  aiDock.setAttribute("aria-hidden", "false");
-  aiToggle?.classList.add("hidden");
-  if (state.dock.position) {
+  aiDock.style.left = "";
+  aiDock.style.top = "";
+  aiDock.style.right = "";
+  aiDock.style.bottom = "";
+}
+
+function resetDockSize({ preserveState = true } = {}) {
+  if (!aiDock) return;
+  aiDock.style.width = "";
+  aiDock.style.height = "";
+  if (!preserveState) {
+    state.dock.size = null;
+  }
+}
+
+function applyStoredDockPosition() {
+  if (!aiDock) return;
+  if (isDockDraggable() && state.dock.position) {
     aiDock.style.left = `${state.dock.position.x}px`;
     aiDock.style.top = `${state.dock.position.y}px`;
     aiDock.style.right = "auto";
     aiDock.style.bottom = "auto";
   } else {
-    aiDock.style.left = "";
-    aiDock.style.top = "";
-    aiDock.style.right = "1.5rem";
-    aiDock.style.bottom = "1.5rem";
+    resetDockPosition();
   }
-  if (aiInput && !aiInput.disabled) {
+}
+
+function applyStoredDockSize() {
+  if (!aiDock) return;
+  if (isDockDraggable() && state.dock.size) {
+    aiDock.style.width = `${state.dock.size.width}px`;
+    aiDock.style.height = `${state.dock.size.height}px`;
+  } else if (!state.dock.resizing) {
+    resetDockSize();
+  }
+}
+
+function handleDockResize() {
+  if (!aiDock) return;
+  if (!isDockDraggable()) {
+    state.dock.dragging = false;
+    state.dock.resizing = false;
+    state.dock.resizeStart = null;
+    aiDock.classList.remove("dragging", "resizing");
+    resetDockPosition();
+    resetDockSize();
+  } else {
+    applyStoredDockPosition();
+    applyStoredDockSize();
+  }
+}
+
+function toggleDockTabDataState(tabName, hasData) {
+  aiDockTabs.forEach((button) => {
+    if (button.dataset.aiTab === tabName) {
+      button.classList.toggle("has-data", Boolean(hasData));
+    }
+  });
+}
+
+function setDockTab(tabName) {
+  const target = DOCK_TABS.has(tabName) ? tabName : "chat";
+  state.dock.activeTab = target;
+  aiDockTabs.forEach((button) => {
+    const isActive = button.dataset.aiTab === target;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+    button.setAttribute("tabindex", isActive ? "0" : "-1");
+  });
+  aiDockPanels.forEach((panel) => {
+    const matches = panel.dataset.aiPanel === target;
+    panel.classList.toggle("active", matches);
+    panel.setAttribute("aria-hidden", String(!matches));
+  });
+  if (state.dock.open && target === "chat" && aiInput && !aiInput.disabled) {
+    setTimeout(() => aiInput?.focus(), 0);
+  }
+}
+
+function toggleAiDock(tabName) {
+  if (state.dock.open) {
+    closeAiDock({ focusToggle: true });
+  } else {
+    openAiDock({ tab: tabName });
+  }
+}
+
+function openAiDock(options = {}) {
+  if (!aiDock) return;
+  const tab = options.tab || state.dock.activeTab;
+  setDockTab(tab);
+  state.dock.open = true;
+  aiDock.classList.add("open");
+  aiDock.setAttribute("aria-hidden", "false");
+  aiToggle?.classList.add("hidden");
+  aiBackdrop?.classList.add("open");
+  aiBackdrop?.setAttribute("aria-hidden", "false");
+  applyStoredDockPosition();
+  applyStoredDockSize();
+  if (tab === "chat" && aiInput && !aiInput.disabled) {
     aiInput.focus();
   }
 }
 
-function closeAiDock() {
+function closeAiDock(options = {}) {
   if (!aiDock) return;
+  const { focusToggle = false } = options;
   state.dock.open = false;
-  aiDock.classList.remove("open");
+  state.dock.dragging = false;
+  state.dock.resizing = false;
+  state.dock.resizeStart = null;
+  aiDock.classList.remove("open", "dragging");
+  aiDock.classList.remove("resizing");
   aiDock.setAttribute("aria-hidden", "true");
   aiToggle?.classList.remove("hidden");
+  aiBackdrop?.classList.remove("open");
+  aiBackdrop?.setAttribute("aria-hidden", "true");
+  if (focusToggle) {
+    aiToggle?.focus();
+  }
 }
 
 function setLastLatLon(lat, lon) {
@@ -378,7 +585,7 @@ function setLoading(isLoading) {
     searchBtn.disabled = isLoading;
     if (isLoading) {
       searchBtn.dataset.label = searchBtn.textContent;
-      searchBtn.textContent = "Loading…";
+      searchBtn.textContent = "Loading...";
     } else if (searchBtn.dataset.label) {
       searchBtn.textContent = searchBtn.dataset.label;
       delete searchBtn.dataset.label;
@@ -537,7 +744,7 @@ function formatCoordinateLabel(lat, lon) {
 
 function requireLatLon() {
   if (!state.lastLatLon) {
-    showToast("Chọn vị trí trước đã");
+    showToast("Choose a location first.");
     return null;
   }
   return { ...state.lastLatLon };
@@ -561,6 +768,7 @@ async function loadInsights(options = {}) {
 
   state.ai.insights.loading = true;
   setCardLoading(aiInsightsBody, true);
+  renderDockInsights(null, { loading: true });
 
   try {
     const params = new URLSearchParams({ lat: coords.lat.toString(), lon: coords.lon.toString() });
@@ -570,7 +778,10 @@ async function loadInsights(options = {}) {
     renderInsightsCard(data);
   } catch (error) {
     state.ai.insights.dirty = true;
-    renderAiCardError(aiInsightsBody, extractAiErrorMessage(error), error?.details);
+    state.ai.insights.data = null;
+    const message = extractAiErrorMessage(error);
+    renderAiCardError(aiInsightsBody, message, error?.details);
+    renderDockInsights(null, { message, meta: error?.details });
     handleCardError(error);
   } finally {
     state.ai.insights.loading = false;
@@ -596,6 +807,7 @@ async function loadAlerts(options = {}) {
 
   state.ai.alerts.loading = true;
   setCardLoading(aiAlertsBody, true);
+  renderDockAlerts(null, { loading: true });
 
   try {
     const params = new URLSearchParams({ lat: coords.lat.toString(), lon: coords.lon.toString() });
@@ -605,7 +817,10 @@ async function loadAlerts(options = {}) {
     renderAlertsCard(data);
   } catch (error) {
     state.ai.alerts.dirty = true;
-    renderAiCardError(aiAlertsBody, extractAiErrorMessage(error), error?.details);
+    state.ai.alerts.data = null;
+    const message = extractAiErrorMessage(error);
+    renderAiCardError(aiAlertsBody, message, error?.details);
+    renderDockAlerts(null, { message, meta: error?.details });
     handleCardError(error);
   } finally {
     state.ai.alerts.loading = false;
@@ -613,30 +828,81 @@ async function loadAlerts(options = {}) {
   }
 }
 
-function renderInsightsCard(result) {
-  aiInsightsBody.innerHTML = "";
-  const summary = (result?.summary || "").trim();
+function populateInsightsTarget(target, result, { metaClass, emptyMessage } = {}) {
+  if (!target) return;
+  target.innerHTML = "";
+  const summary = typeof result?.summary === "string" ? result.summary.trim() : "";
   if (summary) {
     summary.split(/\n+/).forEach((paragraph) => {
+      const trimmed = paragraph.trim();
+      if (!trimmed) return;
       const p = document.createElement("p");
-      p.textContent = paragraph.trim();
-      aiInsightsBody.appendChild(p);
+      p.textContent = trimmed;
+      target.appendChild(p);
     });
   } else {
-    aiInsightsBody.appendChild(createPlaceholder("Không có dữ liệu tóm tắt."));
+    target.appendChild(createPlaceholder(emptyMessage || "No AI summary available yet."));
   }
-
-  const meta = buildAiCardMeta(result);
+  const meta = createMetaElement(result);
   if (meta) {
-    aiInsightsBody.appendChild(meta);
+    if (metaClass) {
+      meta.classList.add(metaClass);
+    }
+    target.appendChild(meta);
   }
 }
 
-function renderAlertsCard(result) {
-  aiAlertsBody.innerHTML = "";
-  const analysis = result?.analysis;
+function renderInsightsCard(result) {
+  state.ai.insights.data = result || null;
+  populateInsightsTarget(aiInsightsBody, result, {
+    metaClass: "ai-card-meta",
+    emptyMessage: "No AI summary available yet.",
+  });
+  renderDockInsights(result);
+}
+
+function renderDockInsights(result, options = {}) {
+  if (!aiDockInsights) return;
+  const { loading = false, message = null, meta = null } = options;
+  aiDockInsights.innerHTML = "";
+  if (loading) {
+    body.appendChild(createPlaceholder("Loading..."));
+    toggleDockTabDataState("insights", false);
+    return;
+  }
+  if (!result) {
+    aiDockInsights.appendChild(
+      createPlaceholder(message || "Select a location to load AI insights.")
+    );
+    const metaEl = createMetaElement(meta);
+    if (metaEl) {
+      metaEl.classList.add("ai-dock-meta");
+      aiDockInsights.appendChild(metaEl);
+    }
+    toggleDockTabDataState("insights", false);
+    return;
+  }
+  populateInsightsTarget(aiDockInsights, result, {
+    metaClass: "ai-dock-meta",
+    emptyMessage: message || "No AI summary available yet.",
+  });
+  const hasSummary = typeof result.summary === "string" && result.summary.trim().length > 0;
+  toggleDockTabDataState("insights", hasSummary);
+}
+
+function populateAlertsTarget(target, result, { metaClass, emptyMessage } = {}) {
+  if (!target) return;
+  target.innerHTML = "";
+  const analysis = result?.analysis && typeof result.analysis === "object" ? result.analysis : null;
   if (!analysis) {
-    aiAlertsBody.appendChild(createPlaceholder("Không có cảnh báo nào."));
+    target.appendChild(createPlaceholder(emptyMessage || "No weather alerts right now."));
+    const metaEl = createMetaElement(result);
+    if (metaEl) {
+      if (metaClass) {
+        metaEl.classList.add(metaClass);
+      }
+      target.appendChild(metaEl);
+    }
     return;
   }
 
@@ -644,65 +910,108 @@ function renderAlertsCard(result) {
   header.className = "ai-alert-header";
 
   const headline = document.createElement("strong");
-  headline.textContent = analysis.headline || "Cảnh báo thời tiết";
+  headline.textContent = String(analysis.headline || "Weather alert");
   header.appendChild(headline);
 
-  const severityEl = document.createElement("span");
-  severityEl.className = "ai-alert-severity";
-  const severity = typeof analysis.severity === "string" ? analysis.severity : "unknown";
-  severityEl.textContent = `Mức độ: ${severity.toUpperCase()}`;
-  header.appendChild(severityEl);
+  if (analysis.severity) {
+    const severityEl = document.createElement("span");
+    severityEl.className = "ai-alert-severity";
+    severityEl.textContent = `Severity: ${String(analysis.severity).toUpperCase()}`;
+    header.appendChild(severityEl);
+  }
 
-  aiAlertsBody.appendChild(header);
+  target.appendChild(header);
 
   if (Array.isArray(analysis.risks) && analysis.risks.length) {
     const risksTitle = document.createElement("strong");
-    risksTitle.textContent = "Rủi ro";
-    aiAlertsBody.appendChild(risksTitle);
+    risksTitle.textContent = "Risks";
+    target.appendChild(risksTitle);
 
     const riskList = document.createElement("ul");
     riskList.className = "ai-alert-list";
     analysis.risks.forEach((risk) => {
       const li = document.createElement("li");
-      const type = String(risk.type || "").toUpperCase();
-      const level = risk.level != null ? ` • cấp ${risk.level}` : "";
-      const why = risk.why ? `: ${risk.why}` : "";
+      const type = risk && risk.type ? String(risk.type).toUpperCase() : "RISK";
+      const level = Number.isFinite(risk?.level) ? ` - level ${risk.level}` : "";
+      const why = risk?.why ? `: ${risk.why}` : "";
       li.textContent = `${type}${level}${why}`.trim();
       riskList.appendChild(li);
     });
-    aiAlertsBody.appendChild(riskList);
+    target.appendChild(riskList);
   }
 
-  if (Array.isArray(analysis.advice) && analysis.advice.length) {
+  const adviceItems = Array.isArray(analysis.advice)
+    ? analysis.advice
+    : analysis.advice
+    ? [analysis.advice]
+    : [];
+  if (adviceItems.length) {
     const adviceTitle = document.createElement("strong");
-    adviceTitle.textContent = "Lời khuyên";
-    aiAlertsBody.appendChild(adviceTitle);
+    adviceTitle.textContent = "Advice";
+    target.appendChild(adviceTitle);
 
     const adviceList = document.createElement("ul");
     adviceList.className = "ai-alert-list";
-    analysis.advice.forEach((tip) => {
+    adviceItems.forEach((tip) => {
+      const text = typeof tip === "string" ? tip.trim() : String(tip || "");
+      if (!text) return;
       const li = document.createElement("li");
-      li.textContent = tip;
+      li.textContent = text;
       adviceList.appendChild(li);
     });
-    aiAlertsBody.appendChild(adviceList);
+    target.appendChild(adviceList);
   }
 
-  const meta = buildAiCardMeta(result);
-  if (meta) {
-    aiAlertsBody.appendChild(meta);
+  const metaEl = createMetaElement(result);
+  if (metaEl) {
+    if (metaClass) {
+      metaEl.classList.add(metaClass);
+    }
+    target.appendChild(metaEl);
   }
 }
 
-function buildAiCardMeta(data) {
-  const parts = metaPartsFromSource(data);
-  if (!parts.length) {
-    return null;
+function renderAlertsCard(result) {
+  state.ai.alerts.data = result || null;
+  populateAlertsTarget(aiAlertsBody, result, {
+    metaClass: "ai-card-meta",
+    emptyMessage: "No active AI alerts.",
+  });
+  renderDockAlerts(result);
+}
+
+function renderDockAlerts(result, options = {}) {
+  if (!aiDockAlerts) return;
+  const { loading = false, message = null, meta = null } = options;
+  aiDockAlerts.innerHTML = "";
+  if (loading) {
+    aiDockAlerts.appendChild(createPlaceholder("Loading..."));
+    toggleDockTabDataState("alerts", false);
+    return;
   }
-  const meta = document.createElement("div");
-  meta.className = "ai-card-meta";
-  meta.textContent = parts.join(" • ");
-  return meta;
+  if (!result) {
+    aiDockAlerts.appendChild(
+      createPlaceholder(message || "Select a location to load AI alerts.")
+    );
+    const metaEl = createMetaElement(meta);
+    if (metaEl) {
+      metaEl.classList.add("ai-dock-meta");
+      aiDockAlerts.appendChild(metaEl);
+    }
+    toggleDockTabDataState("alerts", false);
+    return;
+  }
+  populateAlertsTarget(aiDockAlerts, result, {
+    metaClass: "ai-dock-meta",
+    emptyMessage: message || "No active AI alerts.",
+  });
+  const analysis = result?.analysis && typeof result.analysis === "object" ? result.analysis : null;
+  const hasContent = !!analysis && (
+    analysis.headline ||
+    (Array.isArray(analysis.advice) && analysis.advice.length > 0) ||
+    (Array.isArray(analysis.risks) && analysis.risks.length > 0)
+  );
+  toggleDockTabDataState("alerts", hasContent);
 }
 
 function createPlaceholder(message) {
@@ -719,31 +1028,33 @@ function setCardLoading(body, isLoading) {
   card.classList.toggle("loading", isLoading);
   if (isLoading) {
     body.innerHTML = "";
-    body.appendChild(createPlaceholder("Loading…"));
+    body.appendChild(createPlaceholder("Loading..."));
   }
 }
 
 function renderAiCardError(body, message, details) {
   if (!body) return;
   body.innerHTML = "";
-  body.appendChild(createPlaceholder(message || "Không thể tải dữ liệu AI."));
-  const meta = buildAiCardMeta(details);
+  body.appendChild(createPlaceholder(message || "Unable to load AI data."));
+  const meta = createMetaElement(details);
   if (meta) {
+    meta.classList.add("ai-card-meta");
     body.appendChild(meta);
   }
 }
 
 function extractAiErrorMessage(error) {
-  if (!error) return "Không thể tải dữ liệu AI.";
+  if (!error) return "Unable to load AI data.";
   if (typeof error === "string") return error;
   if (error.details?.hint) return error.details.hint;
   if (error.details?.detail) return error.details.detail;
   if (error.details?.error === "OPENAI_DISABLED") {
-    return "AI Weather Agent chưa được bật.";
+    return "AI Weather Agent is disabled.";
   }
   if (error.message) return error.message;
-  return "Không thể tải dữ liệu AI.";
+  return "Unable to load AI data.";
 }
+
 
 function handleCardError(error) {
   if (!error) return;
@@ -863,7 +1174,9 @@ function handleAiError(error) {
 
 async function doAsk() {
   if (!state.dock.open) {
-    openAiDock();
+    openAiDock({ tab: "chat" });
+  } else {
+    setDockTab("chat");
   }
   if (state.aiLoading) return;
   const coords = requireLatLon();
@@ -871,7 +1184,7 @@ async function doAsk() {
 
   const question = (aiInput?.value || "").trim();
   if (!question) {
-    showToast("Hãy nhập câu hỏi cho AI");
+    showToast("Please enter a question for the AI.");
     aiInput?.focus();
     return;
   }
@@ -894,8 +1207,8 @@ async function doAsk() {
 }
 
 function renderAiChat(question, result) {
-  const questionText = question ? `Câu hỏi: ${question}` : "";
-  const answer = result?.answer || "Không có câu trả lời";
+  const questionText = question ? `Question: ${question}` : "";
+  const answer = result?.answer || "No response available.";
   const body = questionText ? `${questionText}\n\n${answer}` : answer;
   appendAiMessage({
     title: "Chat",

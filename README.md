@@ -60,6 +60,15 @@ curl "http://127.0.0.1:5000/api/weather?lat=21.0278&lon=105.8342&units=metric"
 
 Set `OPENAI_API_KEY` (single line, no quotes) to enable AI-powered insights. Without a key, the AI endpoints reply with `{"error":"OPENAI_DISABLED"}` and the UI clearly states that AI is disabled.
 
+Using DeepSeek instead of OpenAI:
+
+- Set `OPENAI_API_KEY` to your DeepSeek API key.
+- Set `OPENAI_BASE_URL=https://api.deepseek.com`.
+- Optional (defaults already set in code):
+  - `OPENAI_SUMMARY_MODEL=deepseek-chat`
+  - `OPENAI_ALERTS_MODEL=deepseek-chat`
+  - `OPENAI_CHAT_MODEL=deepseek-chat`
+
 ### Manual API checks
 
 ```bash

@@ -34,7 +34,8 @@ except Exception as exc:  # pragma: no cover - gracefully handle missing depende
 
 _LOGGER = logging.getLogger(__name__)
 
-SUMMARY_MODEL = os.getenv("OPENAI_SUMMARY_MODEL", "gpt-4o-mini")
+# Default to DeepSeek unless overridden via env
+SUMMARY_MODEL = os.getenv("OPENAI_SUMMARY_MODEL", "deepseek-chat")
 ALERTS_MODEL = os.getenv("OPENAI_ALERTS_MODEL", SUMMARY_MODEL)
 CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", SUMMARY_MODEL)
 
@@ -106,8 +107,8 @@ def build_context_payload(data: Dict[str, Any]) -> Dict[str, Any]:
 
     location = data.get("location", {}) or {}
     current = data.get("current", {}) or {}
-    hourly = (data.get("hourly") or [])[:12]
-    daily = (data.get("daily") or [])[:7]
+    hourly = (data.get("hourly") or [])[:6]
+    daily = (data.get("daily") or [])[:3]
     fetched_at = data.get("fetched_at")
 
     return {
@@ -138,9 +139,15 @@ def _get_client() -> OpenAI:
     if not api_key:
         raise AiDisabled("OpenAI API key is missing")
 
-    _CLIENT = OpenAI(api_key=api_key)
+    base_url = (os.getenv("OPENAI_BASE_URL") or "https://api.deepseek.com").strip()
+    # Initialize OpenAI-compatible client; works with DeepSeek via base_url
+    try:
+        _CLIENT = OpenAI(api_key=api_key, base_url=base_url)
+    except TypeError:
+        # Fallback for older SDKs without base_url parameter
+        _CLIENT = OpenAI(api_key=api_key)
     _CLIENT_KEY_FINGERPRINT = _mask(api_key)
-    _LOGGER.info("OpenAI client initialized with key=%s", _CLIENT_KEY_FINGERPRINT)
+    _LOGGER.info("OpenAI-compatible client initialized base_url=%s key=%s", base_url, _CLIENT_KEY_FINGERPRINT)
     return _CLIENT
 
 
@@ -157,21 +164,29 @@ def _call_openai(*, model: str, system: str, user: str, response_format: Optiona
             {"role": "user", "content": user},
         ],
         "temperature": 0.3,
+        "max_tokens": 400,
     }
-    if response_format:
-        payload["response_format"] = response_format
+    # Intentionally avoid response_format with DeepSeek
 
     for attempt in range(2):
         try:
-            response = client.responses.create(timeout=10, **payload)
+            # Use Chat Completions since our payload is chat-style (messages[])
+            response = client.chat.completions.create(timeout=20, **payload)
             took_ms = int((time.perf_counter() - started) * 1000)
             model_used = getattr(response, "model", model)
-            content = getattr(response, "output_text", "").strip()
+            # Extract text content from the first choice
+            content = ""
+            try:
+                content = (response.choices[0].message.content or "").strip()
+            except Exception:
+                content = ""
+            _LOGGER.info("ai_call_ok model=%s took_ms=%s", model_used, took_ms)
             return _AiResult(trace_id=trace_id, model=model_used, took_ms=took_ms, content=content)
         except APITimeoutError as exc:  # pragma: no cover - network path
             last_error = exc
             _LOGGER.warning("OpenAI request timeout (attempt %s/%s)", attempt + 1, 2)
             if attempt == 1:
+                _LOGGER.error("ai_timeout model=%s error=%s", model, exc)
                 raise AiTimeout("OpenAI request timed out") from exc
         except APIConnectionError as exc:  # pragma: no cover - network path
             last_error = exc
@@ -184,14 +199,17 @@ def _call_openai(*, model: str, system: str, user: str, response_format: Optiona
                     "OpenAI server error %s (attempt %s/%s)", status, attempt + 1, 2
                 )
             else:
+                _LOGGER.error("ai_api_error model=%s error=%s", model, exc)
                 raise AiServiceError(f"OpenAI API error: {exc}") from exc
 
         if attempt == 0:
             continue
 
         if last_error:
+            _LOGGER.error("ai_request_failed model=%s error=%s", model, last_error)
             raise AiServiceError(f"OpenAI request failed: {last_error}") from last_error
 
+    _LOGGER.error("ai_request_failed_unknown model=%s", model)
     raise AiServiceError("OpenAI request failed: unknown error")
 
 
@@ -248,6 +266,58 @@ def alerts(data: Dict[str, Any]) -> Dict[str, Any]:
 
     _validate_alerts_payload(analysis)
 
+    return {
+        "analysis": analysis,
+        "trace_id": result.trace_id,
+        "model": result.model,
+        "took_ms": result.took_ms,
+    }
+
+
+def summarize(data: Dict[str, Any]) -> Dict[str, Any]:
+    context = build_context_payload(data)
+    system = "Bạn là chuyên gia khí tượng, trả lời ngắn gọn."
+    user_intro = (
+        "Tóm tắt thời tiết ngắn gọn (2-4 câu), nêu mức độ tin cậy "
+        "(Thấp/Trung bình/Cao) và 3-4 lời khuyên."
+    )
+    user_payload = f"```json\n{json.dumps(context, ensure_ascii=False)}\n```"
+    result = _call_openai(model=SUMMARY_MODEL, system=system, user=f"{user_intro}\n{user_payload}")
+    _LOGGER.info("insights_ok model=%s took_ms=%s", result.model, result.took_ms)
+    return {
+        "summary": result.content,
+        "trace_id": result.trace_id,
+        "model": result.model,
+        "took_ms": result.took_ms,
+    }
+
+
+def alerts(data: Dict[str, Any]) -> Dict[str, Any]:
+    context = build_context_payload(data)
+    system = "Bạn là chuyên gia khí tượng, trả lời ngắn gọn."
+    prompt = (
+        "Phân tích dữ liệu thời tiết ngắn gọn.\n"
+        "Hãy trả về các khuyến nghị ngắn gọn theo JSON:\n"
+        "{\n  \"headline\": \"chuỗi ≤ 80 ký tự\",\n  \"severity\": \"none|low|moderate|high|extreme\",\n  \"advice\": [\"...\"]\n}\n"
+    )
+    data_json = json.dumps(context, ensure_ascii=False)
+    user = f"{prompt}\nDữ liệu: {data_json[:1500]}"
+
+    result = _call_openai(
+        model=ALERTS_MODEL,
+        system=system,
+        user=user,
+    )
+
+    raw = result.content or ""
+    try:
+        analysis = json.loads(raw)
+        if not isinstance(analysis, dict):
+            raise ValueError("analysis not an object")
+    except Exception:
+        analysis = {"headline": "Cảnh báo thời tiết", "advice": [raw.strip()[:400]]}
+
+    _LOGGER.info("alerts_ok model=%s took_ms=%s", result.model, result.took_ms)
     return {
         "analysis": analysis,
         "trace_id": result.trace_id,
