@@ -135,31 +135,95 @@ def forecast() -> Any:
         logger.error("AnalysisAgent is not ready: %s", exc)
         return jsonify({"error": str(exc)}), 501
 
-    return jsonify(processed_forecast)
+    final_response = _prepare_final_response(raw_forecast, processed_forecast)
+
+    return jsonify(final_response)
 
 
 def _process_forecast(raw_forecast: Dict[str, Any]) -> Dict[str, Any]:
     """Run the forecast data through the analysis agent."""
 
-    if hasattr(analysis_agent, "process_forecast"):
-        return analysis_agent.process_forecast(raw_forecast)
-
-    if hasattr(analysis_agent, "generate_summary"):
-        return analysis_agent.generate_summary(raw_forecast)
-
-    raise NotImplementedError("AnalysisAgent lacks a recognised processing method.")
+    try:
+        return analysis_agent.generate_insights(raw_forecast)
+    except AttributeError as error:  # pragma: no cover - defensive fallback
+        raise NotImplementedError(
+            "AnalysisAgent lacks the 'generate_insights' method."
+        ) from error
 
 
 def _fetch_raw_forecast(city: str) -> Any:
     """Obtain the forecast from the configured data agent."""
 
-    if hasattr(data_agent, "get_forecast"):
-        return data_agent.get_forecast(city)
-
-    if hasattr(data_agent, "fetch_forecast"):
+    try:
         return data_agent.fetch_forecast(city)
+    except AttributeError as error:  # pragma: no cover - defensive fallback
+        raise NotImplementedError(
+            "DataAgent lacks the 'fetch_forecast' method."
+        ) from error
 
-    raise NotImplementedError("DataAgent lacks a recognised forecast retrieval method.")
+
+def _degrees_to_cardinal(degrees: float) -> str:
+    """Convert wind direction in degrees to a cardinal representation."""
+
+    directions = [
+        "N",
+        "NNE",
+        "NE",
+        "ENE",
+        "E",
+        "ESE",
+        "SE",
+        "SSE",
+        "S",
+        "SSW",
+        "SW",
+        "WSW",
+        "W",
+        "WNW",
+        "NW",
+        "NNW",
+    ]
+    index = int((degrees % 360) / 22.5 + 0.5) % len(directions)
+    return directions[index]
+
+
+def _prepare_final_response(
+    raw_data: Dict[str, Any], analysis_results: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Combine raw forecast data and AI insights into the final payload."""
+
+    city_info = raw_data.get("city", {})
+    forecast_items = raw_data.get("list", [])
+    first_entry = forecast_items[0] if forecast_items else {}
+    main_data = first_entry.get("main", {})
+    wind_data = first_entry.get("wind", {})
+
+    current_temp = main_data.get("temp")
+    feels_like = main_data.get("feels_like")
+    humidity = main_data.get("humidity")
+
+    wind_speed_ms = wind_data.get("speed")
+    wind_direction_deg = wind_data.get("deg")
+
+    wind_components = []
+    if wind_speed_ms is not None:
+        wind_speed_kmh = wind_speed_ms * 3.6
+        wind_components.append(f"{round(wind_speed_kmh)} km/h")
+    if wind_direction_deg is not None:
+        wind_components.append(_degrees_to_cardinal(float(wind_direction_deg)))
+
+    final_payload: Dict[str, Any] = {
+        "city": city_info.get("name", ""),
+        "current_temp": round(current_temp) if isinstance(current_temp, (int, float)) else current_temp,
+        "feels_like": round(feels_like) if isinstance(feels_like, (int, float)) else feels_like,
+        "humidity": f"{humidity}%" if humidity is not None else "",
+        "wind": " ".join(wind_components) if wind_components else "",
+        "ai_alert": str(analysis_results.get("alert", "")),
+        "ai_summary": str(analysis_results.get("summary", "")),
+        "ai_advice": str(analysis_results.get("advice", "")),
+    }
+
+    return final_payload
 
 
 if __name__ == "__main__":
