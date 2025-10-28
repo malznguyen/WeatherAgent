@@ -77,14 +77,14 @@
                     <div>
                         <p class="text-sm uppercase tracking-widest text-indigo-400">Current Temperature</p>
                         <div class="flex items-end space-x-3 mt-3">
-                            <span id="current-temp" class="text-5xl font-bold">27°C</span>
-                            <span class="text-sm text-gray-400 mb-2">Feels like 29°C</span>
+                            <span id="current-temp" class="text-5xl font-bold">--°C</span>
+                            <span class="text-sm text-gray-400 mb-2">Feels like <span id="feels-like">--°C</span></span>
                         </div>
                         <p class="text-sm text-gray-400 mt-3">Latest forecast sourced from the Data Agent and processed through the Analysis Agent.</p>
                     </div>
                     <div class="mt-6 text-sm text-gray-400">
-                        <p><span class="text-gray-200">Humidity:</span> 68%</p>
-                        <p><span class="text-gray-200">Wind:</span> 12 km/h NE</p>
+                        <p><span class="text-gray-200">Humidity:</span> <span id="humidity">--%</span></p>
+                        <p><span class="text-gray-200">Wind:</span> <span id="wind">-- km/h</span></p>
                     </div>
                 </div>
                 <div class="bg-gray-800/60 border border-gray-700 rounded-xl p-6">
@@ -232,6 +232,9 @@
             const runAnalysisButton = document.getElementById('run-analysis');
             const cityInput = document.getElementById('city-input');
             const currentTempElement = document.getElementById('current-temp');
+            const feelsLikeElement = document.getElementById('feels-like');
+            const humidityElement = document.getElementById('humidity');
+            const windElement = document.getElementById('wind');
             const aiSummaryText = document.getElementById('ai-summary-text');
             const alertCard = document.getElementById('alert-card');
             const alertTitle = document.getElementById('alert-title');
@@ -290,22 +293,55 @@
 
                     const data = await response.json();
 
-                    if (data && data.currentTemperature) {
-                        currentTempElement.textContent = `${data.currentTemperature}°C`;
-                    }
+                    if (data) {
+                        const {
+                            current_temp,
+                            feels_like,
+                            humidity,
+                            wind,
+                            ai_summary,
+                            ai_alert
+                        } = data;
 
-                    if (data && data.ai_summary) {
-                        aiSummaryText.textContent = data.ai_summary;
-                    } else {
-                        aiSummaryText.textContent = 'AI Agent chưa cung cấp tóm tắt cho yêu cầu này.';
-                    }
+                        if (typeof current_temp === 'number') {
+                            currentTempElement.textContent = `${current_temp}°C`;
+                        } else {
+                            currentTempElement.textContent = '--°C';
+                        }
 
-                    const alertType = (data && data.ai_alert ? data.ai_alert : 'NONE').toUpperCase();
+                        if (typeof feels_like === 'number') {
+                            feelsLikeElement.textContent = `${feels_like}°C`;
+                        } else {
+                            feelsLikeElement.textContent = '--°C';
+                        }
 
-                    if (alertType !== 'NONE') {
-                        showAlertCard(alertType);
-                    } else {
-                        showNoAlertCard();
+                        if (typeof humidity === 'number') {
+                            humidityElement.textContent = `${humidity}%`;
+                        } else {
+                            humidityElement.textContent = '--%';
+                        }
+
+                        if (typeof wind === 'string' && wind.trim()) {
+                            windElement.textContent = wind;
+                        } else if (typeof wind === 'number') {
+                            windElement.textContent = `${wind} km/h`;
+                        } else {
+                            windElement.textContent = '-- km/h';
+                        }
+
+                        if (ai_summary) {
+                            aiSummaryText.textContent = ai_summary;
+                        } else {
+                            aiSummaryText.textContent = 'AI Agent chưa cung cấp tóm tắt cho yêu cầu này.';
+                        }
+
+                        const alertType = (ai_alert || 'NONE').toUpperCase();
+
+                        if (alertType !== 'NONE') {
+                            showAlertCard(alertType);
+                        } else {
+                            showNoAlertCard();
+                        }
                     }
                 } catch (error) {
                     console.error('Error fetching forecast:', error);
