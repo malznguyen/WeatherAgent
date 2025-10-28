@@ -27,18 +27,21 @@ ALERTS_MODEL = os.getenv("OPENAI_ALERTS_MODEL", SUMMARY_MODEL)
 CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", SUMMARY_MODEL)
 
 SYSTEM_SUMMARY = (
-    "Bạn là chuyên gia khí tượng. Tóm tắt thời tiết chính xác, trung lập. "
-    "Viết 2-4 câu, sau đó tối đa 4 gạch đầu dòng với lời khuyên rõ ràng (dùng °C, m/s)."
+    "Bạn là chuyên gia khí tượng viết tiếng Việt. Sử dụng dữ liệu JSON để tóm tắt"
+    " thời tiết hiện tại và 12 giờ tới trong 2-4 câu, nêu rõ mức độ tự tin (Thấp/Trung bình/Cao). "
+    "Sau phần tóm tắt, đưa tối đa 4 gạch đầu dòng lời khuyên hành động rõ ràng, dùng đơn vị °C và m/s. "
+    "Giữ giọng trung lập, không giật gân."
 )
 
 SYSTEM_ALERTS = (
-    "Bạn là chuyên gia cảnh báo thời tiết. Trả về JSON đúng schema yêu cầu. "
-    "Đảm bảo độ dài headline ≤ 80 ký tự và các trường rủi ro có type, level, why."
+    "Bạn là chuyên gia cảnh báo thời tiết. Phân tích dữ liệu JSON và trả về JSON với các trường:"
+    " severity (none|low|moderate|high|extreme), headline (tiếng Việt, ≤80 ký tự),"
+    " risks (danh sách đối tượng {type, level 1-5, why}) và advice (danh sách câu ngắn gọn)."
 )
 
 SYSTEM_QA = (
-    "Bạn là trợ lý thời tiết. Trả lời tối đa 6 câu, chỉ dựa trên dữ liệu đã cho. "
-    "Nếu thiếu dữ liệu cần thiết hãy nói rõ."
+    "Bạn là trợ lý thời tiết tiếng Việt. Trả lời tối đa 6 câu dựa trên dữ liệu JSON đã cho,"
+    " sử dụng đơn vị °C và m/s. Nếu thiếu dữ liệu phù hợp thì giải thích rõ thay vì suy đoán."
 )
 
 
@@ -167,8 +170,8 @@ def _call_openai(*, model: str, system: str, user: str, response_format: Optiona
 def summarize(data: Dict[str, Any]) -> Dict[str, Any]:
     context = build_context_payload(data)
     user_prompt = (
-        "Dưới đây là dữ liệu thời tiết dạng JSON. Hãy tóm tắt chính xác tình hình hiện tại,"
-        " xu hướng ngắn hạn và đưa ra mẹo hữu ích.\n"
+        "Dưới đây là dữ liệu thời tiết dạng JSON. Hãy bám sát hướng dẫn hệ thống để"
+        " tóm tắt, nêu mức độ tự tin và đưa ra mẹo phù hợp.\n"
         f"```json\n{json.dumps(context, ensure_ascii=False)}\n```"
     )
     result = _call_openai(model=SUMMARY_MODEL, system=SYSTEM_SUMMARY, user=user_prompt)
@@ -183,8 +186,7 @@ def summarize(data: Dict[str, Any]) -> Dict[str, Any]:
 def alerts(data: Dict[str, Any]) -> Dict[str, Any]:
     context = build_context_payload(data)
     user_prompt = (
-        "Trích xuất rủi ro thời tiết từ dữ liệu JSON sau. Đánh giá mức độ nghiêm trọng"
-        " và tư vấn hành động. Trả về JSON đúng schema.\n"
+        "Trích xuất rủi ro thời tiết từ dữ liệu JSON sau và trả về JSON theo hướng dẫn hệ thống.\n"
         f"```json\n{json.dumps(context, ensure_ascii=False)}\n```"
     )
     result = _call_openai(
@@ -199,9 +201,12 @@ def alerts(data: Dict[str, Any]) -> Dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise AiServiceError("OpenAI trả về nội dung không phải JSON hợp lệ") from exc
 
-    analysis = parsed.get("analysis") if isinstance(parsed, dict) else None
-    if not isinstance(analysis, dict):
-        raise AiServiceError("Thiếu trường 'analysis' trong phản hồi AI")
+    if isinstance(parsed, dict) and isinstance(parsed.get("analysis"), dict):
+        analysis = parsed["analysis"]
+    elif isinstance(parsed, dict):
+        analysis = parsed
+    else:
+        raise AiServiceError("Phản hồi AI không đúng định dạng JSON mong đợi")
 
     _validate_alerts_payload(analysis)
 
@@ -259,4 +264,7 @@ def _validate_alerts_payload(analysis: Dict[str, Any]) -> None:
 
     if not isinstance(advice, list):
         raise AiServiceError("'advice' phải là danh sách")
+    for tip in advice:
+        if not isinstance(tip, str) or not tip.strip():
+            raise AiServiceError("Mỗi gợi ý trong 'advice' phải là chuỗi không rỗng")
 
