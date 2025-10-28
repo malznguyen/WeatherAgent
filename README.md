@@ -6,7 +6,7 @@ A refreshed Weather Forecast Agent with a Flask backend and a responsive Leaflet
 
 - Python 3.10+
 - OpenWeather API key (required)
-- (Optional) OpenAI API key if you plan to extend AI features
+- (Optional) OpenAI API key to enable the AI Weather Agent
 
 ## Setup
 
@@ -21,7 +21,7 @@ Create a `.env` file with at least:
 
 ```
 OPENWEATHER_API_KEY=your_openweather_key
-OPENAI_API_KEY=
+OPENAI_API_KEY=your_openai_key
 ```
 
 ## Running the app
@@ -39,6 +39,22 @@ curl http://127.0.0.1:5000/healthz
 curl "http://127.0.0.1:5000/api/geocode?query=Hanoi"
 curl "http://127.0.0.1:5000/api/weather?lat=21.0278&lon=105.8342"
 ```
+
+## AI Weather Agent
+
+Set `OPENAI_API_KEY` (single line, no quotes) to enable AI-powered insights. Without a key, the AI endpoints reply with `{"error":"OPENAI_DISABLED"}` and the UI clearly states that AI is disabled.
+
+### Manual API checks
+
+```bash
+curl "http://127.0.0.1:5000/api/ai/insights?lat=21.0278&lon=105.8342"
+curl "http://127.0.0.1:5000/api/ai/alerts?lat=21.0278&lon=105.8342"
+curl -X POST "http://127.0.0.1:5000/api/ai/ask" \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Tối nay có cần mang áo mưa không?","lat":21.0278,"lon":105.8342}'
+```
+
+The frontend now includes an AI Weather Agent drawer for quick insights, alerts, and Q&A.
 
 Then open [http://127.0.0.1:5000/](http://127.0.0.1:5000/) in your browser. Search for a city, click on the map, or use your current location to retrieve weather data.
 
