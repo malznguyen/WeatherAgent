@@ -33,6 +33,8 @@ class DataAgent:
         params = {
             "q": city_name,
             "appid": self.api_key,
+            "units": "metric",
+            "lang": "vi",
         }
 
         try:
